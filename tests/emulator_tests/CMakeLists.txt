@@ -1,0 +1,7 @@
+add_executable(init_template_test init_template_test.c)
+target_link_libraries(init_template_test PRIVATE hardware_emulator hardware_kernels)
+add_test(NAME init_template_test COMMAND init_template_test)
+
+add_executable(matmul_random_test matmul_random_test.c)
+target_link_libraries(matmul_random_test PRIVATE hardware_emulator hardware_kernels m)
+add_test(NAME matmul_random_test COMMAND matmul_random_test)
