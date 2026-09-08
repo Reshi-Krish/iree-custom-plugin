@@ -4,30 +4,30 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/hal/drivers/null/device.h"
+#include "hw_runtime_plugin/device.h"
 
 #include "iree/async/frontier.h"
 #include "iree/async/frontier_tracker.h"
 #include "iree/async/util/proactor_pool.h"
-#include "iree/hal/drivers/null/allocator.h"
-#include "iree/hal/drivers/null/api.h"
-#include "iree/hal/drivers/null/channel.h"
-#include "iree/hal/drivers/null/command_buffer.h"
-#include "iree/hal/drivers/null/event.h"
-#include "iree/hal/drivers/null/executable.h"
-#include "iree/hal/drivers/null/executable_cache.h"
-#include "iree/hal/drivers/null/semaphore.h"
+#include "hw_runtime_plugin/allocator.h"
+#include "hw_runtime_plugin/api.h"
+#include "hw_runtime_plugin/channel.h"
+#include "hw_runtime_plugin/command_buffer.h"
+#include "hw_runtime_plugin/event.h"
+#include "hw_runtime_plugin/executable.h"
+#include "hw_runtime_plugin/executable_cache.h"
+#include "hw_runtime_plugin/semaphore.h"
 #include "iree/hal/utils/file_registry.h"
 #include "iree/hal/utils/file_transfer.h"
 #include "iree/hal/utils/queue_emulation.h"
 #include "iree/hal/utils/queue_host_call_emulation.h"
 
 //===----------------------------------------------------------------------===//
-// iree_hal_null_device_options_t
+// iree_hal_hw_emulator_device_options_t
 //===----------------------------------------------------------------------===//
 
-IREE_API_EXPORT void iree_hal_null_device_options_initialize(
-    iree_hal_null_device_options_t* out_options) {
+IREE_API_EXPORT void iree_hal_hw_emulator_device_options_initialize(
+    iree_hal_hw_emulator_device_options_t* out_options) {
   memset(out_options, 0, sizeof(*out_options));
   // TODO(null): set defaults based on compiler configuration. Flags should not
   // be used as multiple devices may be configured within the process or the
@@ -35,18 +35,18 @@ IREE_API_EXPORT void iree_hal_null_device_options_initialize(
   // mechanism accessible here.
 }
 
-static iree_status_t iree_hal_null_device_options_verify(
-    const iree_hal_null_device_options_t* options) {
+static iree_status_t iree_hal_hw_emulator_device_options_verify(
+    const iree_hal_hw_emulator_device_options_t* options) {
   // TODO(null): verify that the parameters are within expected ranges and any
   // requested features are supported.
   return iree_ok_status();
 }
 
 //===----------------------------------------------------------------------===//
-// iree_hal_null_device_t
+// iree_hal_hw_emulator_device_t
 //===----------------------------------------------------------------------===//
 
-typedef struct iree_hal_null_device_t {
+typedef struct iree_hal_hw_emulator_device_t {
   iree_hal_resource_t resource;
   iree_string_view_t identifier;
 
@@ -66,7 +66,7 @@ typedef struct iree_hal_null_device_t {
   iree_async_frontier_tracker_t* frontier_tracker;
 
   // This device's axis and monotonic epoch counter for frontier tracking.
-  // The null driver has no real submit path; these are plumbing-only.
+  // The hw_emulator driver has no real submit path; these are plumbing-only.
   iree_async_axis_t axis;
   iree_atomic_int64_t epoch;
 
@@ -77,19 +77,19 @@ typedef struct iree_hal_null_device_t {
   iree_hal_device_topology_info_t topology_info;
 
   // + trailing identifier string storage
-} iree_hal_null_device_t;
+} iree_hal_hw_emulator_device_t;
 
-static const iree_hal_device_vtable_t iree_hal_null_device_vtable;
+static const iree_hal_device_vtable_t iree_hal_hw_emulator_device_vtable;
 
-static iree_hal_null_device_t* iree_hal_null_device_cast(
+static iree_hal_hw_emulator_device_t* iree_hal_hw_emulator_device_cast(
     iree_hal_device_t* base_value) {
-  IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_null_device_vtable);
-  return (iree_hal_null_device_t*)base_value;
+  IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_hw_emulator_device_vtable);
+  return (iree_hal_hw_emulator_device_t*)base_value;
 }
 
-iree_status_t iree_hal_null_device_create(
+iree_status_t iree_hal_hw_emulator_device_create(
     iree_string_view_t identifier,
-    const iree_hal_null_device_options_t* options,
+    const iree_hal_hw_emulator_device_options_t* options,
     const iree_hal_device_create_params_t* create_params,
     iree_allocator_t host_allocator, iree_hal_device_t** out_device) {
   IREE_ASSERT_ARGUMENT(options);
@@ -101,13 +101,13 @@ iree_status_t iree_hal_null_device_create(
 
   // Verify the parameters prior to creating resources.
   IREE_RETURN_AND_END_ZONE_IF_ERROR(
-      z0, iree_hal_null_device_options_verify(options));
+      z0, iree_hal_hw_emulator_device_options_verify(options));
 
-  iree_hal_null_device_t* device = NULL;
+  iree_hal_hw_emulator_device_t* device = NULL;
   iree_host_size_t total_size = sizeof(*device) + identifier.size;
   IREE_RETURN_AND_END_ZONE_IF_ERROR(
       z0, iree_allocator_malloc(host_allocator, total_size, (void**)&device));
-  iree_hal_resource_initialize(&iree_hal_null_device_vtable, &device->resource);
+  iree_hal_resource_initialize(&iree_hal_hw_emulator_device_vtable, &device->resource);
   iree_string_view_append_to_buffer(
       identifier, &device->identifier,
       (char*)device + total_size - identifier.size);
@@ -124,7 +124,7 @@ iree_status_t iree_hal_null_device_create(
   // Some implementations may share allocators across multiple devices created
   // from the same driver.
   if (iree_status_is_ok(status)) {
-    status = iree_hal_null_allocator_create(host_allocator,
+    status = iree_hal_hw_emulator_allocator_create(host_allocator,
                                             &device->device_allocator);
   }
 
@@ -137,8 +137,8 @@ iree_status_t iree_hal_null_device_create(
   return status;
 }
 
-static void iree_hal_null_device_clear_topology_info(
-    iree_hal_null_device_t* device) {
+static void iree_hal_hw_emulator_device_clear_topology_info(
+    iree_hal_hw_emulator_device_t* device) {
   if (device->frontier_tracker) {
     iree_async_frontier_tracker_retire_axis(
         device->frontier_tracker, device->axis,
@@ -150,8 +150,8 @@ static void iree_hal_null_device_clear_topology_info(
   memset(&device->topology_info, 0, sizeof(device->topology_info));
 }
 
-static void iree_hal_null_device_destroy(iree_hal_device_t* base_device) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+static void iree_hal_hw_emulator_device_destroy(iree_hal_device_t* base_device) {
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
   iree_allocator_t host_allocator = iree_hal_device_host_allocator(base_device);
   IREE_TRACE_ZONE_BEGIN(z0);
 
@@ -161,7 +161,7 @@ static void iree_hal_null_device_destroy(iree_hal_device_t* base_device) {
   // implementation performs internal async operations those should be shutdown
   // and joined first.
 
-  iree_hal_null_device_clear_topology_info(device);
+  iree_hal_hw_emulator_device_clear_topology_info(device);
   iree_hal_allocator_release(device->device_allocator);
   iree_hal_channel_provider_release(device->channel_provider);
   iree_async_proactor_pool_release(device->proactor_pool);
@@ -171,42 +171,42 @@ static void iree_hal_null_device_destroy(iree_hal_device_t* base_device) {
   IREE_TRACE_ZONE_END(z0);
 }
 
-static iree_string_view_t iree_hal_null_device_id(
+static iree_string_view_t iree_hal_hw_emulator_device_id(
     iree_hal_device_t* base_device) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
   return device->identifier;
 }
 
-static iree_allocator_t iree_hal_null_device_host_allocator(
+static iree_allocator_t iree_hal_hw_emulator_device_host_allocator(
     iree_hal_device_t* base_device) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
   return device->host_allocator;
 }
 
-static iree_hal_allocator_t* iree_hal_null_device_allocator(
+static iree_hal_allocator_t* iree_hal_hw_emulator_device_allocator(
     iree_hal_device_t* base_device) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
   return device->device_allocator;
 }
 
-static void iree_hal_null_replace_device_allocator(
+static void iree_hal_hw_emulator_replace_device_allocator(
     iree_hal_device_t* base_device, iree_hal_allocator_t* new_allocator) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
   iree_hal_allocator_retain(new_allocator);
   iree_hal_allocator_release(device->device_allocator);
   device->device_allocator = new_allocator;
 }
 
-static void iree_hal_null_replace_channel_provider(
+static void iree_hal_hw_emulator_replace_channel_provider(
     iree_hal_device_t* base_device, iree_hal_channel_provider_t* new_provider) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
   iree_hal_channel_provider_retain(new_provider);
   iree_hal_channel_provider_release(device->channel_provider);
   device->channel_provider = new_provider;
 }
 
-static iree_status_t iree_hal_null_device_trim(iree_hal_device_t* base_device) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+static iree_status_t iree_hal_hw_emulator_device_trim(iree_hal_device_t* base_device) {
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): if the device has any cached resources that can be safely
   // dropped here (unused pools/etc). This is usually called in low-memory
@@ -218,10 +218,10 @@ static iree_status_t iree_hal_null_device_trim(iree_hal_device_t* base_device) {
   return iree_ok_status();
 }
 
-static iree_status_t iree_hal_null_device_query_i64(
+static iree_status_t iree_hal_hw_emulator_device_query_i64(
     iree_hal_device_t* base_device, iree_string_view_t category,
     iree_string_view_t key, int64_t* out_value) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
   *out_value = 0;
 
   // TODO(null): implement additional queries. These are stubs for common ones
@@ -265,11 +265,11 @@ static iree_status_t iree_hal_null_device_query_i64(
       (int)category.size, category.data, (int)key.size, key.data);
 }
 
-static iree_status_t iree_hal_null_device_query_capabilities(
+static iree_status_t iree_hal_hw_emulator_device_query_capabilities(
     iree_hal_device_t* base_device,
     iree_hal_device_capabilities_t* out_capabilities) {
   // TODO(null): populate capabilities based on device features.
-  // For the null driver, we return a zeroed struct indicating no special
+  // For the hw_emulator driver, we return a zeroed struct indicating no special
   // hardware capabilities. Implementations should populate this with:
   // - physical_device_uuid: A unique identifier for the physical device
   // - flags: Capability bits (timeline semaphores, unified memory, etc.)
@@ -281,8 +281,8 @@ static iree_status_t iree_hal_null_device_query_capabilities(
 }
 
 static const iree_hal_device_topology_info_t*
-iree_hal_null_device_topology_info(iree_hal_device_t* base_device) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+iree_hal_hw_emulator_device_topology_info(iree_hal_device_t* base_device) {
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
   // TODO(null): return topology info if device is part of a multi-device setup.
   // The topology_info field should be populated during device creation or when
   // the device joins a topology. For standalone devices, the zeroed struct
@@ -291,7 +291,7 @@ iree_hal_null_device_topology_info(iree_hal_device_t* base_device) {
   return &device->topology_info;
 }
 
-static iree_status_t iree_hal_null_device_refine_topology_edge(
+static iree_status_t iree_hal_hw_emulator_device_refine_topology_edge(
     iree_hal_device_t* src_device, iree_hal_device_t* dst_device,
     iree_hal_topology_edge_t* edge) {
   // TODO(null): refine topology edge based on device-specific information.
@@ -301,19 +301,19 @@ static iree_status_t iree_hal_null_device_refine_topology_edge(
   // - Set precise bandwidth/latency costs
   // - Enable direct memory access modes (ALIAS instead of COPY)
   // - Adjust coherency flags based on actual hardware capabilities
-  // For the null driver, we have no hardware-specific refinement.
+  // For the hw_emulator driver, we have no hardware-specific refinement.
   (void)src_device;
   (void)dst_device;
   (void)edge;
   return iree_ok_status();
 }
 
-static iree_status_t iree_hal_null_device_assign_topology_info(
+static iree_status_t iree_hal_hw_emulator_device_assign_topology_info(
     iree_hal_device_t* base_device,
     const iree_hal_device_topology_info_t* topology_info) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
   if (!topology_info) {
-    iree_hal_null_device_clear_topology_info(device);
+    iree_hal_hw_emulator_device_clear_topology_info(device);
     return iree_ok_status();
   }
   iree_async_frontier_tracker_t* frontier_tracker =
@@ -328,63 +328,63 @@ static iree_status_t iree_hal_null_device_assign_topology_info(
   return iree_ok_status();
 }
 
-static iree_status_t iree_hal_null_device_create_channel(
+static iree_status_t iree_hal_hw_emulator_device_create_channel(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     iree_hal_channel_params_t params, iree_hal_channel_t** out_channel) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): pass any additional resources required to create the channel.
   // The device->channel_provider can be used to get default rank/count,
   // exchange IDs, etc as needed.
   (void)device;
 
-  return iree_hal_null_channel_create(
+  return iree_hal_hw_emulator_channel_create(
       params, iree_hal_device_host_allocator(base_device), out_channel);
 }
 
-static iree_status_t iree_hal_null_device_create_command_buffer(
+static iree_status_t iree_hal_hw_emulator_device_create_command_buffer(
     iree_hal_device_t* base_device, iree_hal_command_buffer_mode_t mode,
     iree_hal_command_category_t command_categories,
     iree_hal_queue_affinity_t queue_affinity, iree_host_size_t binding_capacity,
     iree_hal_command_buffer_t** out_command_buffer) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
   // TODO(null): pass any additional resources required to create the command
   // buffer. The implementation could pool command buffers here.
-  return iree_hal_null_command_buffer_create(
+  return iree_hal_hw_emulator_command_buffer_create(
       iree_hal_device_allocator(base_device), mode, command_categories,
       queue_affinity, binding_capacity, device->host_allocator,
       out_command_buffer);
 }
 
-static iree_status_t iree_hal_null_device_create_event(
+static iree_status_t iree_hal_hw_emulator_device_create_event(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     iree_hal_event_flags_t flags, iree_hal_event_t** out_event) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): pass any additional resources required to create the event.
   // The implementation could pool events here.
   (void)device;
 
-  return iree_hal_null_event_create(queue_affinity, flags,
+  return iree_hal_hw_emulator_event_create(queue_affinity, flags,
                                     iree_hal_device_host_allocator(base_device),
                                     out_event);
 }
 
-static iree_status_t iree_hal_null_device_create_executable_cache(
+static iree_status_t iree_hal_hw_emulator_device_create_executable_cache(
     iree_hal_device_t* base_device, iree_string_view_t identifier,
     iree_hal_executable_cache_t** out_executable_cache) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): pass any additional resources required during executable
   // creation or cache management.
   (void)device;
 
-  return iree_hal_null_executable_cache_create(
+  return iree_hal_hw_emulator_executable_cache_create(
       identifier, iree_hal_device_host_allocator(base_device),
       out_executable_cache);
 }
 
-static iree_status_t iree_hal_null_device_import_file(
+static iree_status_t iree_hal_hw_emulator_device_import_file(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     iree_hal_memory_access_t access, iree_io_file_handle_t* handle,
     iree_hal_external_file_flags_t flags, iree_hal_file_t** out_file) {
@@ -397,21 +397,21 @@ static iree_status_t iree_hal_null_device_import_file(
       /*proactor=*/NULL, iree_hal_device_host_allocator(base_device), out_file);
 }
 
-static iree_status_t iree_hal_null_device_create_semaphore(
+static iree_status_t iree_hal_hw_emulator_device_create_semaphore(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     uint64_t initial_value, iree_hal_semaphore_flags_t flags,
     iree_hal_semaphore_t** out_semaphore) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
-  return iree_hal_null_semaphore_create(device->proactor, queue_affinity,
+  return iree_hal_hw_emulator_semaphore_create(device->proactor, queue_affinity,
                                         initial_value, flags,
                                         device->host_allocator, out_semaphore);
 }
 
 static iree_hal_semaphore_compatibility_t
-iree_hal_null_device_query_semaphore_compatibility(
+iree_hal_hw_emulator_device_query_semaphore_compatibility(
     iree_hal_device_t* base_device, iree_hal_semaphore_t* semaphore) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): return the appropriate bits for the provided semaphore
   // indicating how it may be used with this device. The semaphore may have been
@@ -426,21 +426,21 @@ iree_hal_null_device_query_semaphore_compatibility(
   return compatibility;
 }
 
-static iree_status_t iree_hal_null_device_query_queue_pool_backend(
+static iree_status_t iree_hal_hw_emulator_device_query_queue_pool_backend(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     iree_hal_queue_pool_backend_t* out_backend) {
   return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
                           "queue pool backend not implemented");
 }
 
-static iree_status_t iree_hal_null_device_queue_alloca(
+static iree_status_t iree_hal_hw_emulator_device_queue_alloca(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
     iree_hal_pool_t* pool, iree_hal_buffer_params_t params,
     iree_device_size_t allocation_size, iree_hal_alloca_flags_t flags,
     iree_hal_buffer_t** IREE_RESTRICT out_buffer) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): perform an allocation of a transient buffer in queue order.
   // The allocation may be used on any queue set in the provided queue affinity.
@@ -454,12 +454,12 @@ static iree_status_t iree_hal_null_device_queue_alloca(
   return status;
 }
 
-static iree_status_t iree_hal_null_device_queue_dealloca(
+static iree_status_t iree_hal_hw_emulator_device_queue_dealloca(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
     iree_hal_buffer_t* buffer, iree_hal_dealloca_flags_t flags) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): perform a deallocation of the transient buffer in queue order.
   // Only buffers allocated with queue_alloca on the same device will be passed.
@@ -475,7 +475,7 @@ static iree_status_t iree_hal_null_device_queue_dealloca(
   return status;
 }
 
-static iree_status_t iree_hal_null_device_queue_fill(
+static iree_status_t iree_hal_hw_emulator_device_queue_fill(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
@@ -490,7 +490,7 @@ static iree_status_t iree_hal_null_device_queue_fill(
       target_buffer, target_offset, length, pattern, pattern_length, flags);
 }
 
-static iree_status_t iree_hal_null_device_queue_update(
+static iree_status_t iree_hal_hw_emulator_device_queue_update(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
@@ -510,7 +510,7 @@ static iree_status_t iree_hal_null_device_queue_update(
       flags);
 }
 
-static iree_status_t iree_hal_null_device_queue_copy(
+static iree_status_t iree_hal_hw_emulator_device_queue_copy(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
@@ -526,7 +526,7 @@ static iree_status_t iree_hal_null_device_queue_copy(
       flags);
 }
 
-static iree_status_t iree_hal_null_device_queue_read(
+static iree_status_t iree_hal_hw_emulator_device_queue_read(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
@@ -548,7 +548,7 @@ static iree_status_t iree_hal_null_device_queue_read(
       options);
 }
 
-static iree_status_t iree_hal_null_device_queue_write(
+static iree_status_t iree_hal_hw_emulator_device_queue_write(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
@@ -570,7 +570,7 @@ static iree_status_t iree_hal_null_device_queue_write(
       options);
 }
 
-static iree_status_t iree_hal_null_device_queue_host_call(
+static iree_status_t iree_hal_hw_emulator_device_queue_host_call(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
@@ -586,7 +586,7 @@ static iree_status_t iree_hal_null_device_queue_host_call(
       call, args, flags);
 }
 
-static iree_status_t iree_hal_null_device_queue_dispatch(
+static iree_status_t iree_hal_hw_emulator_device_queue_dispatch(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
@@ -603,14 +603,14 @@ static iree_status_t iree_hal_null_device_queue_dispatch(
       executable, export_ordinal, config, constants, bindings, flags);
 }
 
-static iree_status_t iree_hal_null_device_queue_execute(
+static iree_status_t iree_hal_hw_emulator_device_queue_execute(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
     iree_hal_command_buffer_t* command_buffer,
     iree_hal_buffer_binding_table_t binding_table,
     iree_hal_execute_flags_t flags) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): implement a wait, execute, and signal queue operation. The
   // queue affinity can be used to determine which top-level execution resources
@@ -634,9 +634,9 @@ static iree_status_t iree_hal_null_device_queue_execute(
   return status;
 }
 
-static iree_status_t iree_hal_null_device_queue_flush(
+static iree_status_t iree_hal_hw_emulator_device_queue_flush(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): though buffering queue operations is not recommended if any
   // buffering has been performed it must be flushed here. Callers may be
@@ -649,10 +649,10 @@ static iree_status_t iree_hal_null_device_queue_flush(
   return status;
 }
 
-static iree_status_t iree_hal_null_device_profiling_begin(
+static iree_status_t iree_hal_hw_emulator_device_profiling_begin(
     iree_hal_device_t* base_device,
     const iree_hal_device_profiling_options_t* options) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): set implementation-defined device or global profiling data
   // families. This will be paired with a profiling_end call at some point in
@@ -664,9 +664,9 @@ static iree_status_t iree_hal_null_device_profiling_begin(
   return status;
 }
 
-static iree_status_t iree_hal_null_device_profiling_flush(
+static iree_status_t iree_hal_hw_emulator_device_profiling_flush(
     iree_hal_device_t* base_device) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): flush if needed. May be no-op. Any accumulated profiling
   // information should be carried across the flush but the event can be used to
@@ -680,9 +680,9 @@ static iree_status_t iree_hal_null_device_profiling_flush(
   return status;
 }
 
-static iree_status_t iree_hal_null_device_profiling_end(
+static iree_status_t iree_hal_hw_emulator_device_profiling_end(
     iree_hal_device_t* base_device) {
-  iree_hal_null_device_t* device = iree_hal_null_device_cast(base_device);
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
   // TODO(null): unset whatever profiling_begin set, if anything. May be no-op.
   (void)device;
@@ -692,58 +692,58 @@ static iree_status_t iree_hal_null_device_profiling_end(
   return status;
 }
 
-static iree_status_t iree_hal_null_device_external_capture_begin(
+static iree_status_t iree_hal_hw_emulator_device_external_capture_begin(
     iree_hal_device_t* base_device,
     const iree_hal_device_external_capture_options_t* options) {
   (void)base_device;
   (void)options;
   return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                          "null external capture not implemented");
+                          "hw_emulator external capture not implemented");
 }
 
-static iree_status_t iree_hal_null_device_external_capture_end(
+static iree_status_t iree_hal_hw_emulator_device_external_capture_end(
     iree_hal_device_t* base_device) {
   (void)base_device;
   return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                          "null external capture not implemented");
+                          "hw_emulator external capture not implemented");
 }
 
-static const iree_hal_device_vtable_t iree_hal_null_device_vtable = {
-    .destroy = iree_hal_null_device_destroy,
-    .id = iree_hal_null_device_id,
-    .host_allocator = iree_hal_null_device_host_allocator,
-    .device_allocator = iree_hal_null_device_allocator,
-    .replace_device_allocator = iree_hal_null_replace_device_allocator,
-    .replace_channel_provider = iree_hal_null_replace_channel_provider,
-    .trim = iree_hal_null_device_trim,
-    .query_i64 = iree_hal_null_device_query_i64,
-    .query_capabilities = iree_hal_null_device_query_capabilities,
-    .topology_info = iree_hal_null_device_topology_info,
-    .refine_topology_edge = iree_hal_null_device_refine_topology_edge,
-    .assign_topology_info = iree_hal_null_device_assign_topology_info,
-    .create_channel = iree_hal_null_device_create_channel,
-    .create_command_buffer = iree_hal_null_device_create_command_buffer,
-    .create_event = iree_hal_null_device_create_event,
-    .create_executable_cache = iree_hal_null_device_create_executable_cache,
-    .import_file = iree_hal_null_device_import_file,
-    .create_semaphore = iree_hal_null_device_create_semaphore,
+static const iree_hal_device_vtable_t iree_hal_hw_emulator_device_vtable = {
+    .destroy = iree_hal_hw_emulator_device_destroy,
+    .id = iree_hal_hw_emulator_device_id,
+    .host_allocator = iree_hal_hw_emulator_device_host_allocator,
+    .device_allocator = iree_hal_hw_emulator_device_allocator,
+    .replace_device_allocator = iree_hal_hw_emulator_replace_device_allocator,
+    .replace_channel_provider = iree_hal_hw_emulator_replace_channel_provider,
+    .trim = iree_hal_hw_emulator_device_trim,
+    .query_i64 = iree_hal_hw_emulator_device_query_i64,
+    .query_capabilities = iree_hal_hw_emulator_device_query_capabilities,
+    .topology_info = iree_hal_hw_emulator_device_topology_info,
+    .refine_topology_edge = iree_hal_hw_emulator_device_refine_topology_edge,
+    .assign_topology_info = iree_hal_hw_emulator_device_assign_topology_info,
+    .create_channel = iree_hal_hw_emulator_device_create_channel,
+    .create_command_buffer = iree_hal_hw_emulator_device_create_command_buffer,
+    .create_event = iree_hal_hw_emulator_device_create_event,
+    .create_executable_cache = iree_hal_hw_emulator_device_create_executable_cache,
+    .import_file = iree_hal_hw_emulator_device_import_file,
+    .create_semaphore = iree_hal_hw_emulator_device_create_semaphore,
     .query_semaphore_compatibility =
-        iree_hal_null_device_query_semaphore_compatibility,
-    .query_queue_pool_backend = iree_hal_null_device_query_queue_pool_backend,
-    .queue_alloca = iree_hal_null_device_queue_alloca,
-    .queue_dealloca = iree_hal_null_device_queue_dealloca,
-    .queue_fill = iree_hal_null_device_queue_fill,
-    .queue_update = iree_hal_null_device_queue_update,
-    .queue_copy = iree_hal_null_device_queue_copy,
-    .queue_read = iree_hal_null_device_queue_read,
-    .queue_write = iree_hal_null_device_queue_write,
-    .queue_host_call = iree_hal_null_device_queue_host_call,
-    .queue_dispatch = iree_hal_null_device_queue_dispatch,
-    .queue_execute = iree_hal_null_device_queue_execute,
-    .queue_flush = iree_hal_null_device_queue_flush,
-    .profiling_begin = iree_hal_null_device_profiling_begin,
-    .profiling_flush = iree_hal_null_device_profiling_flush,
-    .profiling_end = iree_hal_null_device_profiling_end,
-    .external_capture_begin = iree_hal_null_device_external_capture_begin,
-    .external_capture_end = iree_hal_null_device_external_capture_end,
+        iree_hal_hw_emulator_device_query_semaphore_compatibility,
+    .query_queue_pool_backend = iree_hal_hw_emulator_device_query_queue_pool_backend,
+    .queue_alloca = iree_hal_hw_emulator_device_queue_alloca,
+    .queue_dealloca = iree_hal_hw_emulator_device_queue_dealloca,
+    .queue_fill = iree_hal_hw_emulator_device_queue_fill,
+    .queue_update = iree_hal_hw_emulator_device_queue_update,
+    .queue_copy = iree_hal_hw_emulator_device_queue_copy,
+    .queue_read = iree_hal_hw_emulator_device_queue_read,
+    .queue_write = iree_hal_hw_emulator_device_queue_write,
+    .queue_host_call = iree_hal_hw_emulator_device_queue_host_call,
+    .queue_dispatch = iree_hal_hw_emulator_device_queue_dispatch,
+    .queue_execute = iree_hal_hw_emulator_device_queue_execute,
+    .queue_flush = iree_hal_hw_emulator_device_queue_flush,
+    .profiling_begin = iree_hal_hw_emulator_device_profiling_begin,
+    .profiling_flush = iree_hal_hw_emulator_device_profiling_flush,
+    .profiling_end = iree_hal_hw_emulator_device_profiling_end,
+    .external_capture_begin = iree_hal_hw_emulator_device_external_capture_begin,
+    .external_capture_end = iree_hal_hw_emulator_device_external_capture_end,
 };

@@ -17,11 +17,11 @@ iree_runtime_cc_library(
     srcs = ["driver_module.c"],
     hdrs = ["driver_module.h"],
     defines = [
-        "IREE_HAVE_HAL_NULL_DRIVER_MODULE=1",
+        "IREE_HAVE_HAL_HW_EMULATOR_DRIVER_MODULE=1",
     ],
     deps = [
         "//runtime/src/iree/base",
         "//runtime/src/iree/hal",
-        "//runtime/src/iree/hal/drivers/null",
+        "//iree_plugin/hw_runtime_plugin:hw_emulator",
     ],
 )

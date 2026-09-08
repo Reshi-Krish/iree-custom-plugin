@@ -4,26 +4,26 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/hal/drivers/null/executable.h"
+#include "hw_runtime_plugin/executable.h"
 
 //===----------------------------------------------------------------------===//
-// iree_hal_null_executable_t
+// iree_hal_hw_emulator_executable_t
 //===----------------------------------------------------------------------===//
 
-typedef struct iree_hal_null_executable_t {
+typedef struct iree_hal_hw_emulator_executable_t {
   iree_hal_resource_t resource;
   iree_allocator_t host_allocator;
-} iree_hal_null_executable_t;
+} iree_hal_hw_emulator_executable_t;
 
-static const iree_hal_executable_vtable_t iree_hal_null_executable_vtable;
+static const iree_hal_executable_vtable_t iree_hal_hw_emulator_executable_vtable;
 
-static iree_hal_null_executable_t* iree_hal_null_executable_cast(
+static iree_hal_hw_emulator_executable_t* iree_hal_hw_emulator_executable_cast(
     iree_hal_executable_t* base_value) {
-  IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_null_executable_vtable);
-  return (iree_hal_null_executable_t*)base_value;
+  IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_hw_emulator_executable_vtable);
+  return (iree_hal_hw_emulator_executable_t*)base_value;
 }
 
-iree_status_t iree_hal_null_executable_create(
+iree_status_t iree_hal_hw_emulator_executable_create(
     const iree_hal_executable_params_t* executable_params,
     iree_allocator_t host_allocator, iree_hal_executable_t** out_executable) {
   IREE_ASSERT_ARGUMENT(executable_params);
@@ -32,11 +32,11 @@ iree_status_t iree_hal_null_executable_create(
   *out_executable = NULL;
 
   // Allocate storage for the executable and its associated data structures.
-  iree_hal_null_executable_t* executable = NULL;
+  iree_hal_hw_emulator_executable_t* executable = NULL;
   IREE_RETURN_AND_END_ZONE_IF_ERROR(
       z0, iree_allocator_malloc(host_allocator, sizeof(*executable),
                                 (void**)&executable));
-  iree_hal_resource_initialize(&iree_hal_null_executable_vtable,
+  iree_hal_resource_initialize(&iree_hal_hw_emulator_executable_vtable,
                                &executable->resource);
   executable->host_allocator = host_allocator;
 
@@ -71,10 +71,10 @@ iree_status_t iree_hal_null_executable_create(
   return status;
 }
 
-static void iree_hal_null_executable_destroy(
+static void iree_hal_hw_emulator_executable_destroy(
     iree_hal_executable_t* base_executable) {
-  iree_hal_null_executable_t* executable =
-      iree_hal_null_executable_cast(base_executable);
+  iree_hal_hw_emulator_executable_t* executable =
+      iree_hal_hw_emulator_executable_cast(base_executable);
   iree_allocator_t host_allocator = executable->host_allocator;
   IREE_TRACE_ZONE_BEGIN(z0);
 
@@ -85,55 +85,55 @@ static void iree_hal_null_executable_destroy(
   IREE_TRACE_ZONE_END(z0);
 }
 
-static iree_host_size_t iree_hal_null_executable_export_count(
+static iree_host_size_t iree_hal_hw_emulator_executable_export_count(
     iree_hal_executable_t* base_executable) {
-  iree_hal_null_executable_t* executable =
-      iree_hal_null_executable_cast(base_executable);
+  iree_hal_hw_emulator_executable_t* executable =
+      iree_hal_hw_emulator_executable_cast(base_executable);
   // TODO(null): return the total number of exports in the executable.
   (void)executable;
   return 0;
 }
 
-static iree_status_t iree_hal_null_executable_export_info(
+static iree_status_t iree_hal_hw_emulator_executable_export_info(
     iree_hal_executable_t* base_executable,
     iree_hal_executable_function_t export_ordinal,
     iree_hal_executable_function_info_t* out_info) {
-  iree_hal_null_executable_t* executable =
-      iree_hal_null_executable_cast(base_executable);
+  iree_hal_hw_emulator_executable_t* executable =
+      iree_hal_hw_emulator_executable_cast(base_executable);
   (void)executable;
   // TODO(null): return export information.
   return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
                           "reflection not implemented");
 }
 
-static iree_status_t iree_hal_null_executable_export_parameters(
+static iree_status_t iree_hal_hw_emulator_executable_export_parameters(
     iree_hal_executable_t* base_executable,
     iree_hal_executable_function_t export_ordinal, iree_host_size_t capacity,
     iree_hal_executable_function_parameter_t* out_parameters) {
-  iree_hal_null_executable_t* executable =
-      iree_hal_null_executable_cast(base_executable);
+  iree_hal_hw_emulator_executable_t* executable =
+      iree_hal_hw_emulator_executable_cast(base_executable);
   (void)executable;
   // TODO(null): return export parameter information.
   return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
                           "parameter reflection not implemented");
 }
 
-static iree_status_t iree_hal_null_executable_lookup_export_by_name(
+static iree_status_t iree_hal_hw_emulator_executable_lookup_export_by_name(
     iree_hal_executable_t* base_executable, iree_string_view_t name,
     iree_hal_executable_function_t* out_export_ordinal) {
-  iree_hal_null_executable_t* executable =
-      iree_hal_null_executable_cast(base_executable);
+  iree_hal_hw_emulator_executable_t* executable =
+      iree_hal_hw_emulator_executable_cast(base_executable);
   (void)executable;
   // TODO(null): lookup the export ordinal by name.
   return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
                           "reflection not implemented");
 }
 
-static iree_status_t iree_hal_null_executable_lookup_global_by_name(
+static iree_status_t iree_hal_hw_emulator_executable_lookup_global_by_name(
     iree_hal_executable_t* base_executable, iree_string_view_t name,
     iree_hal_queue_affinity_t queue_affinity, iree_hal_buffer_t** out_buffer) {
-  iree_hal_null_executable_t* executable =
-      iree_hal_null_executable_cast(base_executable);
+  iree_hal_hw_emulator_executable_t* executable =
+      iree_hal_hw_emulator_executable_cast(base_executable);
   (void)executable;
   (void)name;
   (void)queue_affinity;
@@ -142,11 +142,11 @@ static iree_status_t iree_hal_null_executable_lookup_global_by_name(
                           "global lookup not implemented");
 }
 
-static const iree_hal_executable_vtable_t iree_hal_null_executable_vtable = {
-    .destroy = iree_hal_null_executable_destroy,
-    .function_count = iree_hal_null_executable_export_count,
-    .function_info = iree_hal_null_executable_export_info,
-    .function_parameters = iree_hal_null_executable_export_parameters,
-    .lookup_function_by_name = iree_hal_null_executable_lookup_export_by_name,
-    .lookup_global_by_name = iree_hal_null_executable_lookup_global_by_name,
+static const iree_hal_executable_vtable_t iree_hal_hw_emulator_executable_vtable = {
+    .destroy = iree_hal_hw_emulator_executable_destroy,
+    .function_count = iree_hal_hw_emulator_executable_export_count,
+    .function_info = iree_hal_hw_emulator_executable_export_info,
+    .function_parameters = iree_hal_hw_emulator_executable_export_parameters,
+    .lookup_function_by_name = iree_hal_hw_emulator_executable_lookup_export_by_name,
+    .lookup_global_by_name = iree_hal_hw_emulator_executable_lookup_global_by_name,
 };

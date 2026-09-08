@@ -4,18 +4,18 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#ifndef IREE_HAL_DRIVERS_NULL_DEVICE_H_
-#define IREE_HAL_DRIVERS_NULL_DEVICE_H_
+#ifndef IREE_HAL_DRIVERS_HW_EMULATOR_DEVICE_H_
+#define IREE_HAL_DRIVERS_HW_EMULATOR_DEVICE_H_
 
 #include "iree/base/api.h"
 #include "iree/hal/api.h"
 
 //===----------------------------------------------------------------------===//
-// iree_hal_null_device_t
+// iree_hal_hw_emulator_device_t
 //===----------------------------------------------------------------------===//
 
 // NOTE: nothing in the skeleton implementation. Device creation and adoption is
 // part of the public API header. This header can contain internal types and
 // functions.
 
-#endif  // IREE_HAL_DRIVERS_NULL_DEVICE_H_
+#endif  // IREE_HAL_DRIVERS_HW_EMULATOR_DEVICE_H_

@@ -4,16 +4,16 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/hal/drivers/null/driver.h"
+#include "hw_runtime_plugin/driver.h"
 
-#include "iree/hal/drivers/null/api.h"
+#include "hw_runtime_plugin/api.h"
 
 //===----------------------------------------------------------------------===//
-// iree_hal_null_driver_options_t
+// iree_hal_hw_emulator_driver_options_t
 //===----------------------------------------------------------------------===//
 
-IREE_API_EXPORT void iree_hal_null_driver_options_initialize(
-    iree_hal_null_driver_options_t* out_options) {
+IREE_API_EXPORT void iree_hal_hw_emulator_driver_options_initialize(
+    iree_hal_hw_emulator_driver_options_t* out_options) {
   memset(out_options, 0, sizeof(*out_options));
 
   // TODO(null): set defaults based on compiler configuration. Flags should not
@@ -21,11 +21,11 @@ IREE_API_EXPORT void iree_hal_null_driver_options_initialize(
   // hosting application may be authored in python/etc that does not use a flags
   // mechanism accessible here.
 
-  iree_hal_null_device_options_initialize(&out_options->default_device_options);
+  iree_hal_hw_emulator_device_options_initialize(&out_options->default_device_options);
 }
 
-static iree_status_t iree_hal_null_driver_options_verify(
-    const iree_hal_null_driver_options_t* options) {
+static iree_status_t iree_hal_hw_emulator_driver_options_verify(
+    const iree_hal_hw_emulator_driver_options_t* options) {
   // TODO(null): verify that the parameters are within expected ranges and any
   // requested features are supported.
 
@@ -33,35 +33,35 @@ static iree_status_t iree_hal_null_driver_options_verify(
 }
 
 //===----------------------------------------------------------------------===//
-// iree_hal_null_driver_t
+// iree_hal_hw_emulator_driver_t
 //===----------------------------------------------------------------------===//
 
 // TODO(null): if it's possible to have more than one device use real IDs.
 // This is a placeholder for this skeleton that just indicates the first and
 // only device.
-#define IREE_HAL_NULL_DEVICE_ID_DEFAULT 0
+#define IREE_HAL_HW_EMULATOR_DEVICE_ID_DEFAULT 0
 
-typedef struct iree_hal_null_driver_t {
+typedef struct iree_hal_hw_emulator_driver_t {
   iree_hal_resource_t resource;
   iree_allocator_t host_allocator;
 
   iree_string_view_t identifier;
-  iree_hal_null_driver_options_t options;
+  iree_hal_hw_emulator_driver_options_t options;
 
   // + trailing identifier string storage
-} iree_hal_null_driver_t;
+} iree_hal_hw_emulator_driver_t;
 
-static const iree_hal_driver_vtable_t iree_hal_null_driver_vtable;
+static const iree_hal_driver_vtable_t iree_hal_hw_emulator_driver_vtable;
 
-static iree_hal_null_driver_t* iree_hal_null_driver_cast(
+static iree_hal_hw_emulator_driver_t* iree_hal_hw_emulator_driver_cast(
     iree_hal_driver_t* base_value) {
-  IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_null_driver_vtable);
-  return (iree_hal_null_driver_t*)base_value;
+  IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_hw_emulator_driver_vtable);
+  return (iree_hal_hw_emulator_driver_t*)base_value;
 }
 
-IREE_API_EXPORT iree_status_t iree_hal_null_driver_create(
+IREE_API_EXPORT iree_status_t iree_hal_hw_emulator_driver_create(
     iree_string_view_t identifier,
-    const iree_hal_null_driver_options_t* options,
+    const iree_hal_hw_emulator_driver_options_t* options,
     iree_allocator_t host_allocator, iree_hal_driver_t** out_driver) {
   IREE_ASSERT_ARGUMENT(options);
   IREE_ASSERT_ARGUMENT(out_driver);
@@ -71,13 +71,13 @@ IREE_API_EXPORT iree_status_t iree_hal_null_driver_create(
   // TODO(null): verify options; this may be moved after any libraries are
   // loaded so the verification can use underlying implementation queries.
   IREE_RETURN_AND_END_ZONE_IF_ERROR(
-      z0, iree_hal_null_driver_options_verify(options));
+      z0, iree_hal_hw_emulator_driver_options_verify(options));
 
-  iree_hal_null_driver_t* driver = NULL;
+  iree_hal_hw_emulator_driver_t* driver = NULL;
   iree_host_size_t total_size = sizeof(*driver) + identifier.size;
   IREE_RETURN_AND_END_ZONE_IF_ERROR(
       z0, iree_allocator_malloc(host_allocator, total_size, (void**)&driver));
-  iree_hal_resource_initialize(&iree_hal_null_driver_vtable, &driver->resource);
+  iree_hal_resource_initialize(&iree_hal_hw_emulator_driver_vtable, &driver->resource);
   driver->host_allocator = host_allocator;
   iree_string_view_append_to_buffer(
       identifier, &driver->identifier,
@@ -106,8 +106,8 @@ IREE_API_EXPORT iree_status_t iree_hal_null_driver_create(
   return status;
 }
 
-static void iree_hal_null_driver_destroy(iree_hal_driver_t* base_driver) {
-  iree_hal_null_driver_t* driver = iree_hal_null_driver_cast(base_driver);
+static void iree_hal_hw_emulator_driver_destroy(iree_hal_driver_t* base_driver) {
+  iree_hal_hw_emulator_driver_t* driver = iree_hal_hw_emulator_driver_cast(base_driver);
   iree_allocator_t host_allocator = driver->host_allocator;
   IREE_TRACE_ZONE_BEGIN(z0);
 
@@ -118,7 +118,7 @@ static void iree_hal_null_driver_destroy(iree_hal_driver_t* base_driver) {
   IREE_TRACE_ZONE_END(z0);
 }
 
-static iree_status_t iree_hal_null_driver_query_available_devices(
+static iree_status_t iree_hal_hw_emulator_driver_query_available_devices(
     iree_hal_driver_t* base_driver, iree_allocator_t host_allocator,
     iree_host_size_t* out_device_info_count,
     iree_hal_device_info_t** out_device_infos) {
@@ -129,7 +129,7 @@ static iree_status_t iree_hal_null_driver_query_available_devices(
   // through a process lifetime to appear without needing a full restart.
   static const iree_hal_device_info_t device_infos[1] = {
       {
-          .device_id = IREE_HAL_NULL_DEVICE_ID_DEFAULT,
+          .device_id = IREE_HAL_HW_EMULATOR_DEVICE_ID_DEFAULT,
           .name = iree_string_view_literal("default"),
       },
   };
@@ -140,10 +140,10 @@ static iree_status_t iree_hal_null_driver_query_available_devices(
       (void**)out_device_infos);
 }
 
-static iree_status_t iree_hal_null_driver_dump_device_info(
+static iree_status_t iree_hal_hw_emulator_driver_dump_device_info(
     iree_hal_driver_t* base_driver, iree_hal_device_id_t device_id,
     iree_string_builder_t* builder) {
-  iree_hal_null_driver_t* driver = iree_hal_null_driver_cast(base_driver);
+  iree_hal_hw_emulator_driver_t* driver = iree_hal_hw_emulator_driver_cast(base_driver);
 
   // TODO(null): add useful user-level information to the string builder for the
   // given device_id. This is used by the tools in features like
@@ -153,18 +153,18 @@ static iree_status_t iree_hal_null_driver_dump_device_info(
   return iree_ok_status();
 }
 
-static iree_status_t iree_hal_null_driver_create_device_by_id(
+static iree_status_t iree_hal_hw_emulator_driver_create_device_by_id(
     iree_hal_driver_t* base_driver, iree_hal_device_id_t device_id,
     iree_host_size_t param_count, const iree_string_pair_t* params,
     const iree_hal_device_create_params_t* create_params,
     iree_allocator_t host_allocator, iree_hal_device_t** out_device) {
-  iree_hal_null_driver_t* driver = iree_hal_null_driver_cast(base_driver);
+  iree_hal_hw_emulator_driver_t* driver = iree_hal_hw_emulator_driver_cast(base_driver);
 
   // TODO(null): use the provided params to overwrite the default options. The
   // format of the params is implementation-defined. The params strings can be
   // directly referenced if needed as the device creation is only allowed to
   // access them during the create call below.
-  iree_hal_null_device_options_t options =
+  iree_hal_hw_emulator_device_options_t options =
       driver->options.default_device_options;
 
   // TODO(null): implement creation by device_id; this is mostly used as
@@ -173,23 +173,23 @@ static iree_status_t iree_hal_null_driver_create_device_by_id(
   // device so the ID is ignored.
   (void)driver;
 
-  return iree_hal_null_device_create(driver->identifier, &options,
+  return iree_hal_hw_emulator_device_create(driver->identifier, &options,
                                      create_params, host_allocator, out_device);
 }
 
-static iree_status_t iree_hal_null_driver_create_device_by_path(
+static iree_status_t iree_hal_hw_emulator_driver_create_device_by_path(
     iree_hal_driver_t* base_driver, iree_string_view_t driver_name,
     iree_string_view_t device_path, iree_host_size_t param_count,
     const iree_string_pair_t* params,
     const iree_hal_device_create_params_t* create_params,
     iree_allocator_t host_allocator, iree_hal_device_t** out_device) {
-  iree_hal_null_driver_t* driver = iree_hal_null_driver_cast(base_driver);
+  iree_hal_hw_emulator_driver_t* driver = iree_hal_hw_emulator_driver_cast(base_driver);
 
   // TODO(null): use the provided params to overwrite the default options. The
   // format of the params is implementation-defined. The params strings can be
   // directly referenced if needed as the device creation is only allowed to
   // access them during the create call below.
-  iree_hal_null_device_options_t options =
+  iree_hal_hw_emulator_device_options_t options =
       driver->options.default_device_options;
 
   // TODO(null): support parsing of the device_path. Note that a single driver
@@ -198,14 +198,14 @@ static iree_status_t iree_hal_null_driver_create_device_by_path(
   // device UUID, PCI bus ID, ordinal as used by underlying APIs, etc.
   (void)driver;
 
-  return iree_hal_null_device_create(driver->identifier, &options,
+  return iree_hal_hw_emulator_device_create(driver->identifier, &options,
                                      create_params, host_allocator, out_device);
 }
 
-static const iree_hal_driver_vtable_t iree_hal_null_driver_vtable = {
-    .destroy = iree_hal_null_driver_destroy,
-    .query_available_devices = iree_hal_null_driver_query_available_devices,
-    .dump_device_info = iree_hal_null_driver_dump_device_info,
-    .create_device_by_id = iree_hal_null_driver_create_device_by_id,
-    .create_device_by_path = iree_hal_null_driver_create_device_by_path,
+static const iree_hal_driver_vtable_t iree_hal_hw_emulator_driver_vtable = {
+    .destroy = iree_hal_hw_emulator_driver_destroy,
+    .query_available_devices = iree_hal_hw_emulator_driver_query_available_devices,
+    .dump_device_info = iree_hal_hw_emulator_driver_dump_device_info,
+    .create_device_by_id = iree_hal_hw_emulator_driver_create_device_by_id,
+    .create_device_by_path = iree_hal_hw_emulator_driver_create_device_by_path,
 };

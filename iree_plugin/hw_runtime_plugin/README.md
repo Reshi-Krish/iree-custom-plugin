@@ -15,9 +15,9 @@ fill (memset) you can often implement copy (memcpy) as well at the same time.
 
 1. Duplicate the entire directory in your own repository or the IREE
    `experimental/` folder if going in-tree.
-1. Find/replace `{Null}` with the friendly name of your driver (e.g. `Vulkan`).
-1. Find/replace `_null_` with the C name of your driver (e.g. `vulkan`).
-1. Find/replace `_NULL_` with the upper C name of your driver (e.g. `VULKAN`).
+1. Find/replace `hw_emulator` with the friendly name of your driver (e.g. `Vulkan`).
+1. Find/replace `_hw_emulator_` with the C name of your driver (e.g. `vulkan`).
+1. Find/replace `_HW_EMULATOR_` with the upper C name of your driver (e.g. `VULKAN`).
 1. Find/replace `// TODO(null):` with your github ID, your driver name, or a
    GitHub issue number tracking driver creation (e.g. `// TODO(#1234):`).
 1. Find/replace `iree/hal/drivers/null/` with your source path.

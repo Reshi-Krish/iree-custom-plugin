@@ -4,18 +4,18 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#ifndef IREE_HAL_DRIVERS_NULL_DRIVER_H_
-#define IREE_HAL_DRIVERS_NULL_DRIVER_H_
+#ifndef IREE_HAL_DRIVERS_HW_EMULATOR_ALLOCATOR_H_
+#define IREE_HAL_DRIVERS_HW_EMULATOR_ALLOCATOR_H_
 
 #include "iree/base/api.h"
 #include "iree/hal/api.h"
 
 //===----------------------------------------------------------------------===//
-// iree_hal_null_driver_t
+// iree_hal_hw_emulator_allocator_t
 //===----------------------------------------------------------------------===//
 
-// NOTE: nothing in the skeleton implementation. Driver creation and adoption is
-// part of the public API header. This header can contain internal types and
-// functions.
+// Creates a hw_emulator buffer allocator used for persistent allocations.
+iree_status_t iree_hal_hw_emulator_allocator_create(
+    iree_allocator_t host_allocator, iree_hal_allocator_t** out_allocator);
 
-#endif  // IREE_HAL_DRIVERS_NULL_DRIVER_H_
+#endif  // IREE_HAL_DRIVERS_HW_EMULATOR_ALLOCATOR_H_

@@ -13,7 +13,7 @@ package(
 )
 
 iree_runtime_cc_library(
-    name = "null",
+    name = "hw_emulator",
     srcs = [
         "allocator.c",
         "allocator.h",

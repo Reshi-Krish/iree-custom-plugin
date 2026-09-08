@@ -4,19 +4,18 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#ifndef IREE_HAL_DRIVERS_NULL_EVENT_H_
-#define IREE_HAL_DRIVERS_NULL_EVENT_H_
+#ifndef IREE_HAL_DRIVERS_HW_EMULATOR_DRIVER_H_
+#define IREE_HAL_DRIVERS_HW_EMULATOR_DRIVER_H_
 
 #include "iree/base/api.h"
 #include "iree/hal/api.h"
 
 //===----------------------------------------------------------------------===//
-// iree_hal_null_event_t
+// iree_hal_hw_emulator_driver_t
 //===----------------------------------------------------------------------===//
 
-// WIP API and may change. Mostly ignored for now.
-iree_status_t iree_hal_null_event_create(
-    iree_hal_queue_affinity_t queue_affinity, iree_hal_event_flags_t flags,
-    iree_allocator_t host_allocator, iree_hal_event_t** out_event);
+// NOTE: nothing in the skeleton implementation. Driver creation and adoption is
+// part of the public API header. This header can contain internal types and
+// functions.
 
-#endif  // IREE_HAL_DRIVERS_NULL_EVENT_H_
+#endif  // IREE_HAL_DRIVERS_HW_EMULATOR_DRIVER_H_

@@ -4,26 +4,26 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-#include "iree/hal/drivers/null/semaphore.h"
+#include "hw_runtime_plugin/semaphore.h"
 
 //===----------------------------------------------------------------------===//
-// iree_hal_null_semaphore_t
+// iree_hal_hw_emulator_semaphore_t
 //===----------------------------------------------------------------------===//
 
-typedef struct iree_hal_null_semaphore_t {
+typedef struct iree_hal_hw_emulator_semaphore_t {
   iree_async_semaphore_t async;
   iree_allocator_t host_allocator;
-} iree_hal_null_semaphore_t;
+} iree_hal_hw_emulator_semaphore_t;
 
-static const iree_hal_semaphore_vtable_t iree_hal_null_semaphore_vtable;
+static const iree_hal_semaphore_vtable_t iree_hal_hw_emulator_semaphore_vtable;
 
-static iree_hal_null_semaphore_t* iree_hal_null_semaphore_cast(
+static iree_hal_hw_emulator_semaphore_t* iree_hal_hw_emulator_semaphore_cast(
     iree_hal_semaphore_t* base_value) {
-  IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_null_semaphore_vtable);
-  return (iree_hal_null_semaphore_t*)base_value;
+  IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_hw_emulator_semaphore_vtable);
+  return (iree_hal_hw_emulator_semaphore_t*)base_value;
 }
 
-iree_status_t iree_hal_null_semaphore_create(
+iree_status_t iree_hal_hw_emulator_semaphore_create(
     iree_async_proactor_t* proactor, iree_hal_queue_affinity_t queue_affinity,
     uint64_t initial_value, iree_hal_semaphore_flags_t flags,
     iree_allocator_t host_allocator, iree_hal_semaphore_t** out_semaphore) {
@@ -32,7 +32,7 @@ iree_status_t iree_hal_null_semaphore_create(
   IREE_TRACE_ZONE_BEGIN(z0);
   *out_semaphore = NULL;
 
-  iree_hal_null_semaphore_t* semaphore = NULL;
+  iree_hal_hw_emulator_semaphore_t* semaphore = NULL;
   iree_host_size_t frontier_offset = 0, total_size = 0;
   IREE_RETURN_AND_END_ZONE_IF_ERROR(
       z0, iree_async_semaphore_layout(sizeof(*semaphore), 0, &frontier_offset,
@@ -41,7 +41,7 @@ iree_status_t iree_hal_null_semaphore_create(
       z0,
       iree_allocator_malloc(host_allocator, total_size, (void**)&semaphore));
   iree_async_semaphore_initialize(
-      (const iree_async_semaphore_vtable_t*)&iree_hal_null_semaphore_vtable,
+      (const iree_async_semaphore_vtable_t*)&iree_hal_hw_emulator_semaphore_vtable,
       proactor, initial_value, frontier_offset, 0, &semaphore->async);
   semaphore->host_allocator = host_allocator;
 
@@ -70,10 +70,10 @@ iree_status_t iree_hal_null_semaphore_create(
   return status;
 }
 
-static void iree_hal_null_semaphore_destroy(
+static void iree_hal_hw_emulator_semaphore_destroy(
     iree_async_semaphore_t* base_semaphore) {
-  iree_hal_null_semaphore_t* semaphore =
-      iree_hal_null_semaphore_cast(iree_hal_semaphore_cast(base_semaphore));
+  iree_hal_hw_emulator_semaphore_t* semaphore =
+      iree_hal_hw_emulator_semaphore_cast(iree_hal_semaphore_cast(base_semaphore));
   iree_allocator_t host_allocator = semaphore->host_allocator;
   IREE_TRACE_ZONE_BEGIN(z0);
 
@@ -83,10 +83,10 @@ static void iree_hal_null_semaphore_destroy(
   IREE_TRACE_ZONE_END(z0);
 }
 
-static uint64_t iree_hal_null_semaphore_query(
+static uint64_t iree_hal_hw_emulator_semaphore_query(
     iree_async_semaphore_t* base_semaphore) {
-  iree_hal_null_semaphore_t* semaphore =
-      iree_hal_null_semaphore_cast(iree_hal_semaphore_cast(base_semaphore));
+  iree_hal_hw_emulator_semaphore_t* semaphore =
+      iree_hal_hw_emulator_semaphore_cast(iree_hal_semaphore_cast(base_semaphore));
 
   // TODO(null): return the current value of the semaphore by (depending on the
   // implementation) making a syscall to get it. It's expected that the value
@@ -107,11 +107,11 @@ static uint64_t iree_hal_null_semaphore_query(
   return 0;
 }
 
-static iree_status_t iree_hal_null_semaphore_signal(
+static iree_status_t iree_hal_hw_emulator_semaphore_signal(
     iree_async_semaphore_t* base_semaphore, uint64_t new_value,
     const iree_async_frontier_t* frontier) {
-  iree_hal_null_semaphore_t* semaphore =
-      iree_hal_null_semaphore_cast(iree_hal_semaphore_cast(base_semaphore));
+  iree_hal_hw_emulator_semaphore_t* semaphore =
+      iree_hal_hw_emulator_semaphore_cast(iree_hal_semaphore_cast(base_semaphore));
 
   // TODO(null): validation is optional but encouraged if cheap: semaphores
   // must always be signaled to a value that is greater than the previous value
@@ -137,11 +137,11 @@ static iree_status_t iree_hal_null_semaphore_signal(
   return status;
 }
 
-static iree_status_t iree_hal_null_semaphore_wait(
+static iree_status_t iree_hal_hw_emulator_semaphore_wait(
     iree_hal_semaphore_t* base_semaphore, uint64_t value,
     iree_timeout_t timeout, iree_async_wait_flags_t flags) {
-  iree_hal_null_semaphore_t* semaphore =
-      iree_hal_null_semaphore_cast(base_semaphore);
+  iree_hal_hw_emulator_semaphore_t* semaphore =
+      iree_hal_hw_emulator_semaphore_cast(base_semaphore);
 
   // TODO(null): if a failure status is set return
   // `iree_status_from_code(IREE_STATUS_ABORTED)`. Avoid a full status as it may
@@ -165,7 +165,7 @@ static iree_status_t iree_hal_null_semaphore_wait(
   return status;
 }
 
-static iree_status_t iree_hal_null_semaphore_import_timepoint(
+static iree_status_t iree_hal_hw_emulator_semaphore_import_timepoint(
     iree_hal_semaphore_t* base_semaphore, uint64_t value,
     iree_hal_queue_affinity_t queue_affinity,
     iree_hal_external_timepoint_t external_timepoint) {
@@ -173,7 +173,7 @@ static iree_status_t iree_hal_null_semaphore_import_timepoint(
                           "timepoint import is not yet implemented");
 }
 
-static iree_status_t iree_hal_null_semaphore_export_timepoint(
+static iree_status_t iree_hal_hw_emulator_semaphore_export_timepoint(
     iree_hal_semaphore_t* base_semaphore, uint64_t value,
     iree_hal_queue_affinity_t queue_affinity,
     iree_hal_external_timepoint_type_t requested_type,
@@ -183,14 +183,14 @@ static iree_status_t iree_hal_null_semaphore_export_timepoint(
                           "timepoint export is not yet implemented");
 }
 
-static const iree_hal_semaphore_vtable_t iree_hal_null_semaphore_vtable = {
+static const iree_hal_semaphore_vtable_t iree_hal_hw_emulator_semaphore_vtable = {
     .async =
         {
-            .destroy = iree_hal_null_semaphore_destroy,
-            .query = iree_hal_null_semaphore_query,
-            .signal = iree_hal_null_semaphore_signal,
+            .destroy = iree_hal_hw_emulator_semaphore_destroy,
+            .query = iree_hal_hw_emulator_semaphore_query,
+            .signal = iree_hal_hw_emulator_semaphore_signal,
         },
-    .wait = iree_hal_null_semaphore_wait,
-    .import_timepoint = iree_hal_null_semaphore_import_timepoint,
-    .export_timepoint = iree_hal_null_semaphore_export_timepoint,
+    .wait = iree_hal_hw_emulator_semaphore_wait,
+    .import_timepoint = iree_hal_hw_emulator_semaphore_import_timepoint,
+    .export_timepoint = iree_hal_hw_emulator_semaphore_export_timepoint,
 };

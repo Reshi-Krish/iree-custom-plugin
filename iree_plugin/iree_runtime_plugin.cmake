@@ -1,0 +1,10 @@
+iree_register_external_hal_driver(
+  NAME
+    hw_emulator
+  SOURCE_DIR
+    "${CMAKE_CURRENT_LIST_DIR}"
+  DRIVER_TARGET
+    hw_runtime_plugin::registration
+  REGISTER_FN
+    iree_hal_hw_emulator_driver_module_register
+)
