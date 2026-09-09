@@ -6,6 +6,7 @@
 
 #include "hw_runtime_plugin/device.h"
 
+#include "hardwareEmulator.h"
 #include "iree/async/frontier.h"
 #include "iree/async/frontier_tracker.h"
 #include "iree/async/util/proactor_pool.h"
@@ -17,6 +18,7 @@
 #include "hw_runtime_plugin/executable.h"
 #include "hw_runtime_plugin/executable_cache.h"
 #include "hw_runtime_plugin/semaphore.h"
+#include "hw_runtime_plugin/status_util.h"
 #include "iree/hal/utils/file_registry.h"
 #include "iree/hal/utils/file_transfer.h"
 #include "iree/hal/utils/queue_emulation.h"
@@ -29,10 +31,7 @@
 IREE_API_EXPORT void iree_hal_hw_emulator_device_options_initialize(
     iree_hal_hw_emulator_device_options_t* out_options) {
   memset(out_options, 0, sizeof(*out_options));
-  // TODO(null): set defaults based on compiler configuration. Flags should not
-  // be used as multiple devices may be configured within the process or the
-  // hosting application may be authored in python/etc that does not use a flags
-  // mechanism accessible here.
+  out_options->memory_pool_size = 64 * 1024 * 1024;  // 64MiB default.
 }
 
 static iree_status_t iree_hal_hw_emulator_device_options_verify(
@@ -52,6 +51,11 @@ typedef struct iree_hal_hw_emulator_device_t {
 
   iree_allocator_t host_allocator;
   iree_hal_allocator_t* device_allocator;
+
+  // The single emulated hardware instance and memory pool backing this
+  // device, owned for the device's lifetime. Passed (borrowed) down to the
+  // allocator and, later, to command execution.
+  hw_device_t* hw_device;
 
   // Proactor pool for async I/O. Retained for the lifetime of the device to
   // ensure proactor threads outlive all device resources (semaphores, etc.).
@@ -120,12 +124,15 @@ iree_status_t iree_hal_hw_emulator_device_create(
   iree_status_t status =
       iree_async_proactor_pool_get(device->proactor_pool, 0, &device->proactor);
 
-  // TODO(null): pass device handles and pool configuration to the allocator.
-  // Some implementations may share allocators across multiple devices created
-  // from the same driver.
   if (iree_status_is_ok(status)) {
-    status = iree_hal_hw_emulator_allocator_create(host_allocator,
-                                            &device->device_allocator);
+    status = iree_hal_hw_emulator_status_from_hw(hw_init_hardware(
+        /*device_id=*/0, (size_t)options->memory_pool_size, &device->hw_device));
+  }
+
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_hw_emulator_allocator_create(
+        (iree_hal_device_t*)device, device->hw_device, host_allocator,
+        &device->device_allocator);
   }
 
   if (iree_status_is_ok(status)) {
@@ -165,6 +172,7 @@ static void iree_hal_hw_emulator_device_destroy(iree_hal_device_t* base_device) 
   iree_hal_allocator_release(device->device_allocator);
   iree_hal_channel_provider_release(device->channel_provider);
   iree_async_proactor_pool_release(device->proactor_pool);
+  hw_destroy_hardware(device->hw_device);
 
   iree_allocator_free(host_allocator, device);
 

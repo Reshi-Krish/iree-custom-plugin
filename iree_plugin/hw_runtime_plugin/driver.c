@@ -88,14 +88,12 @@ IREE_API_EXPORT iree_status_t iree_hal_hw_emulator_driver_create(
   // end of the driver struct).
   memcpy(&driver->options, options, sizeof(*options));
 
-  // TODO(null): load libraries and query driver support from the system.
-  // Devices need not be enumerated here if doing so is expensive; the
-  // application may create drivers just to see if they are present but defer
-  // device enumeration until the user requests one. Underlying implementations
-  // can sometimes do bonkers static init stuff as soon as they are touched and
-  // this code may want to do that on-demand instead.
-  iree_status_t status =
-      iree_make_status(IREE_STATUS_UNIMPLEMENTED, "driver not implemented");
+  // The emulator has no global library to load and no way to probe hardware
+  // presence at the driver level: the single "default" device is always
+  // assumed available, and the real hw_device_t handle (owned by
+  // hardwareEmulator.c) is created lazily per-device in
+  // iree_hal_hw_emulator_device_create.
+  iree_status_t status = iree_ok_status();
 
   if (iree_status_is_ok(status)) {
     *out_driver = (iree_hal_driver_t*)driver;

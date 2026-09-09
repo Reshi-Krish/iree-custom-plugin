@@ -22,9 +22,10 @@ extern "C" {
 // Must be initialized with iree_hal_hw_emulator_device_options_initialize prior to
 // use.
 typedef struct iree_hal_hw_emulator_device_options_t {
-  // TODO(null): options for initializing a device such as hardware identifiers,
-  // implementation mode switches, and debugging control.
-  int reserved;
+  // Total size, in bytes, of the hw_emulator's single emulated memory pool.
+  // All device allocations are sub-allocated from this pool by hw_allocate();
+  // the pool does not grow once the device is created.
+  iree_device_size_t memory_pool_size;
 } iree_hal_hw_emulator_device_options_t;
 
 // Initializes |out_options| to default values.

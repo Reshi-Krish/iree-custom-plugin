@@ -7,6 +7,7 @@
 #include "hw_runtime_plugin/allocator.h"
 
 #include "hw_runtime_plugin/buffer.h"
+#include "hw_runtime_plugin/status_util.h"
 
 //===----------------------------------------------------------------------===//
 // iree_hal_hw_emulator_allocator_t
@@ -22,6 +23,10 @@ typedef struct iree_hal_hw_emulator_allocator_t {
   iree_hal_resource_t resource;
   iree_allocator_t host_allocator;
 
+  // Borrowed from the owning device; see allocator.h.
+  iree_hal_device_t* parent_device;
+  hw_device_t* hw_device;
+
   IREE_STATISTICS(iree_hal_allocator_statistics_t statistics;)
 } iree_hal_hw_emulator_allocator_t;
 
@@ -34,7 +39,10 @@ static iree_hal_hw_emulator_allocator_t* iree_hal_hw_emulator_allocator_cast(
 }
 
 iree_status_t iree_hal_hw_emulator_allocator_create(
+    iree_hal_device_t* parent_device, hw_device_t* hw_device,
     iree_allocator_t host_allocator, iree_hal_allocator_t** out_allocator) {
+  IREE_ASSERT_ARGUMENT(parent_device);
+  IREE_ASSERT_ARGUMENT(hw_device);
   IREE_ASSERT_ARGUMENT(out_allocator);
   IREE_TRACE_ZONE_BEGIN(z0);
   *out_allocator = NULL;
@@ -46,22 +54,14 @@ iree_status_t iree_hal_hw_emulator_allocator_create(
   iree_hal_resource_initialize(&iree_hal_hw_emulator_allocator_vtable,
                                &allocator->resource);
   allocator->host_allocator = host_allocator;
+  allocator->parent_device = parent_device;
+  allocator->hw_device = hw_device;
 
-  // TODO(null): query device heaps, supported features (concurrent access/etc),
-  // and prepare any pools that will be used during allocation. It's expected
-  // that most failures that occur after creation are allocation
-  // request-specific so preparing here will help keep the errors more
-  // localized.
-  iree_status_t status =
-      iree_make_status(IREE_STATUS_UNIMPLEMENTED, "allocator not implemented");
-
-  if (iree_status_is_ok(status)) {
-    *out_allocator = (iree_hal_allocator_t*)allocator;
-  } else {
-    iree_hal_allocator_release((iree_hal_allocator_t*)allocator);
-  }
+  // No heaps/pools to prepare up front: hw_allocate() sub-allocates directly
+  // from the hw_device's memory pool on each allocate_buffer call below.
+  *out_allocator = (iree_hal_allocator_t*)allocator;
   IREE_TRACE_ZONE_END(z0);
-  return status;
+  return iree_ok_status();
 }
 
 static void iree_hal_hw_emulator_allocator_destroy(
@@ -133,21 +133,30 @@ iree_hal_hw_emulator_allocator_query_buffer_compatibility(
     iree_hal_allocator_t* IREE_RESTRICT base_allocator,
     iree_hal_buffer_params_t* IREE_RESTRICT params,
     iree_device_size_t* IREE_RESTRICT allocation_size) {
-  iree_hal_hw_emulator_allocator_t* allocator =
-      iree_hal_hw_emulator_allocator_cast(base_allocator);
-
-  // TODO(null): set compatibility rules based on the implementation.
-  // Note that the user may have requested that the allocator place the
-  // allocation based on whatever is optimal for the indicated usage by
-  // including the IREE_HAL_MEMORY_TYPE_OPTIMAL flag. It's still required that
-  // the implementation meet all the requirements but it is free to place it in
-  // either host or device memory so long as the appropriate bits are updated to
-  // indicate where it landed.
-  (void)allocator;
+  // The emulator has a single unified memory pool that is always host
+  // mappable (hw_buffer_map() always succeeds), so any requested buffer can
+  // be allocated. Import/export are not yet implemented (see
+  // import_buffer/export_buffer below) so those compatibility bits are
+  // intentionally left unset.
   iree_hal_buffer_compatibility_t compatibility =
-      IREE_HAL_BUFFER_COMPATIBILITY_NONE;
+      IREE_HAL_BUFFER_COMPATIBILITY_ALLOCATABLE;
 
-  // We are now optimal.
+  // Buffers can only be used on the queue if they are device visible. This
+  // matches devices with discrete memory spaces even though our emulator
+  // does not have one, making it easier to catch buffer definition issues
+  // that would surface on real hardware.
+  if (iree_all_bits_set(params->type, IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE)) {
+    if (iree_any_bit_set(params->usage, IREE_HAL_BUFFER_USAGE_TRANSFER)) {
+      compatibility |= IREE_HAL_BUFFER_COMPATIBILITY_QUEUE_TRANSFER;
+    }
+    if (iree_any_bit_set(params->usage, IREE_HAL_BUFFER_USAGE_DISPATCH)) {
+      compatibility |= IREE_HAL_BUFFER_COMPATIBILITY_QUEUE_DISPATCH;
+    }
+  }
+
+  // The pool is always host-visible; there's no separate device address
+  // space to place buffers optimally within.
+  params->type |= IREE_HAL_MEMORY_TYPE_HOST_VISIBLE;
   params->type &= ~IREE_HAL_MEMORY_TYPE_OPTIMAL;
 
   // Guard against the corner case where the requested buffer size is 0. The
@@ -195,25 +204,30 @@ static iree_status_t iree_hal_hw_emulator_allocator_allocate_buffer(
 #endif  // IREE_STATUS_MODE
   }
 
-  // TODO(null): allocate the underlying device memory. The impl_ptr is just
-  // used for accounting and can be an opaque value (handle/etc) so long as it
-  // is consistent between the alloc and free and unique to the buffer while it
-  // is live. An example iree_hal_hw_emulator_buffer_wrap is provided that can be used
-  // for implementations that are managing memory using underlying allocators
-  // and just wrapping those device pointers in the HAL buffer type. Other
-  // implementations that require more tracking can provide their own buffer
-  // types that do such tracking for them.
-  (void)allocator;
-  void* impl_ptr = NULL;
-  (void)impl_ptr;
+  // Sub-allocate the backing region from the hw_device's single memory pool.
+  // hw_allocate is a bump allocator: there is no corresponding free, so
+  // deallocate_buffer below has nothing to give back to the emulator.
+  hw_buffer_t hw_buffer;
+  IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_status_from_hw(
+      hw_allocate(allocator->hw_device, (size_t)allocation_size, &hw_buffer)));
+
+  const iree_hal_buffer_placement_t placement = {
+      .device = allocator->parent_device,
+      .queue_affinity = compat_params.queue_affinity
+                            ? compat_params.queue_affinity
+                            : IREE_HAL_QUEUE_AFFINITY_ANY,
+      .flags = IREE_HAL_BUFFER_PLACEMENT_FLAG_NONE,
+  };
   iree_hal_buffer_t* buffer = NULL;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "buffer allocation not implemented");
+  iree_status_t status = iree_hal_hw_emulator_buffer_wrap(
+      placement, compat_params.type, compat_params.access, compat_params.usage,
+      allocation_size, /*byte_offset=*/0, /*byte_length=*/allocation_size,
+      allocator->hw_device, hw_buffer, iree_hal_buffer_release_callback_null(),
+      allocator->host_allocator, &buffer);
 
   if (iree_status_is_ok(status)) {
-    // TODO(null): ensure this accounting is balanced in deallocate_buffer.
-    IREE_TRACE_ALLOC_NAMED(IREE_HAL_HW_EMULATOR_ALLOCATOR_ID, impl_ptr,
-                           allocation_size);
+    IREE_TRACE_ALLOC_NAMED(IREE_HAL_HW_EMULATOR_ALLOCATOR_ID,
+                           (void*)(uintptr_t)hw_buffer.offset, allocation_size);
     IREE_STATISTICS(iree_hal_allocator_statistics_record_alloc(
         &allocator->statistics, compat_params.type, allocation_size));
     *out_buffer = buffer;
@@ -229,17 +243,12 @@ static void iree_hal_hw_emulator_allocator_deallocate_buffer(
   iree_hal_hw_emulator_allocator_t* allocator =
       iree_hal_hw_emulator_allocator_cast(base_allocator);
 
-  // TODO(null): free the underlying device memory here. Buffers allocated from
-  // this allocator will call this method to handle cleanup. Note that because
-  // this method is responsible for doing the base iree_hal_buffer_destroy and
-  // the caller assumes the memory has been freed an implementation could pool
-  // the buffer handle and return it in the future.
-  (void)allocator;
+  // Nothing to release on the emulator side: hw_allocate is bump-allocated
+  // and the whole pool is reclaimed by hw_destroy_hardware() when the owning
+  // device is destroyed.
   void* impl_ptr = NULL;
   (void)impl_ptr;
 
-  // TODO(null): if the buffer was imported then this accounting may need to be
-  // conditional depending on the implementation.
   bool was_imported = false;
   if (!was_imported) {
     IREE_TRACE_FREE_NAMED(IREE_HAL_HW_EMULATOR_ALLOCATOR_ID, impl_ptr);

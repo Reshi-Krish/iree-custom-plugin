@@ -36,9 +36,11 @@ iree_cc_library(
     "executable_cache.h"
     "semaphore.c"
     "semaphore.h"
+    "status_util.h"
   INCLUDES
     "${CMAKE_CURRENT_SOURCE_DIR}/.."
   DEPS
+    hardware_emulator::hardware_emulator
     iree::async
     iree::async::util::proactor_pool
     iree::base
