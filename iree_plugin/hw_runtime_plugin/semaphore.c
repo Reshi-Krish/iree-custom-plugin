@@ -30,6 +30,10 @@ static iree_hal_hw_emulator_semaphore_t* iree_hal_hw_emulator_semaphore_cast(
   return (iree_hal_hw_emulator_semaphore_t*)base_value;
 }
 
+bool iree_hal_hw_emulator_semaphore_isa(iree_hal_semaphore_t* semaphore) {
+  return iree_hal_resource_is(semaphore, &iree_hal_hw_emulator_semaphore_vtable);
+}
+
 iree_status_t iree_hal_hw_emulator_semaphore_create(
     iree_async_proactor_t* proactor, iree_hal_queue_affinity_t queue_affinity,
     uint64_t initial_value, iree_hal_semaphore_flags_t flags,

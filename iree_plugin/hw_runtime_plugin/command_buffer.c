@@ -227,7 +227,7 @@ static iree_status_t iree_hal_hw_emulator_applier_dispatch(
                             "dispatch with standard HAL ABI arguments");
   }
 
-  const iree_hal_hw_emulator_executable_export_t* export_entry = NULL;
+  const iree_hal_hw_emulator_kernel_registration_t* export_entry = NULL;
   IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_executable_lookup_export(
       executable, export_ordinal, &export_entry));
   const iree_host_size_t expected_bindings =

@@ -34,6 +34,8 @@ iree_cc_library(
     "executable.h"
     "executable_cache.c"
     "executable_cache.h"
+    "kernel_registry.c"
+    "kernel_registry.h"
     "semaphore.c"
     "semaphore.h"
     "status_util.h"
@@ -41,6 +43,7 @@ iree_cc_library(
     "${CMAKE_CURRENT_SOURCE_DIR}/.."
   DEPS
     hardware_emulator::hardware_emulator
+    hardware_kernels::hardware_kernels
     iree::async
     iree::async::util::proactor_pool
     iree::base
@@ -100,14 +103,25 @@ iree_cc_test(
 
 iree_cc_test(
   NAME
-    command_buffer_matmul_smoke_test
+    queue_execute_matmul_smoke_test
   SRCS
-    "tests/command_buffer_matmul_smoke_test.c"
+    "tests/queue_execute_matmul_smoke_test.c"
   DEPS
     ::hw_emulator
     hardware_kernels::hardware_kernels
     iree::async::util::proactor_pool
     iree::base
     iree::hal
-    iree::hal::utils::deferred_command_buffer
+)
+
+iree_cc_test(
+  NAME
+    executable_kernel_registry_smoke_test
+  SRCS
+    "tests/executable_kernel_registry_smoke_test.c"
+  DEPS
+    ::hw_emulator
+    iree::async::util::proactor_pool
+    iree::base
+    iree::hal
 )

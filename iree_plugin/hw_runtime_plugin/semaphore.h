@@ -27,4 +27,10 @@ iree_status_t iree_hal_hw_emulator_semaphore_create(
     hw_device_t* hw_device, iree_allocator_t host_allocator,
     iree_hal_semaphore_t** out_semaphore);
 
+// Returns true if |semaphore| was created by this driver (as opposed to
+// imported from another driver, which we don't support - see
+// import_timepoint/export_timepoint). Used by
+// device_query_semaphore_compatibility.
+bool iree_hal_hw_emulator_semaphore_isa(iree_hal_semaphore_t* semaphore);
+
 #endif  // IREE_HAL_DRIVERS_HW_EMULATOR_SEMAPHORE_H_

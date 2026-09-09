@@ -18,6 +18,12 @@ typedef struct iree_hal_hw_emulator_channel_t {
   // This is only used to keep the parent channel live for as long as there are
   // any split channels live (including transitive splits).
   iree_hal_channel_t* parent_channel;
+
+  // hw_emulator has no collective communication fabric (there is exactly one
+  // emulated device), so the only channel it can ever honestly represent is
+  // the trivial single-participant group: rank 0 of 1.
+  int32_t rank;
+  int32_t count;
 } iree_hal_hw_emulator_channel_t;
 
 static const iree_hal_channel_vtable_t iree_hal_hw_emulator_channel_vtable;
@@ -48,11 +54,25 @@ iree_status_t iree_hal_hw_emulator_channel_create(iree_hal_channel_params_t para
   iree_hal_resource_initialize(&iree_hal_hw_emulator_channel_vtable,
                                &channel->resource);
   channel->host_allocator = host_allocator;
+  channel->parent_channel = NULL;
 
-  // TODO(null): implement channel setup using params. Note that the id is not
-  // retained and must be copied local if needed beyond this function call.
-  iree_status_t status = iree_make_status(
-      IREE_STATUS_UNIMPLEMENTED, "collective channels not implemented");
+  const int32_t rank =
+      params.rank == IREE_HAL_CHANNEL_RANK_DEFAULT ? 0 : params.rank;
+  const int32_t count =
+      params.count == IREE_HAL_CHANNEL_COUNT_DEFAULT ? 1 : params.count;
+  iree_status_t status = iree_ok_status();
+  if (rank != 0 || count != 1) {
+    // There's no real communication fabric behind this driver to honor a
+    // request for an actual multi-participant group.
+    status = iree_make_status(
+        IREE_STATUS_UNAVAILABLE,
+        "hw_emulator has no collective communication fabric; only the "
+        "trivial single-participant channel (rank 0 of 1) is supported, "
+        "requested rank %d of %d",
+        rank, count);
+  }
+  channel->rank = rank;
+  channel->count = count;
 
   if (iree_status_is_ok(status)) {
     *out_channel = (iree_hal_channel_t*)channel;
@@ -81,34 +101,29 @@ static iree_status_t iree_hal_hw_emulator_channel_split(
     iree_hal_channel_t* base_channel, int32_t color, int32_t key,
     iree_hal_channel_flags_t flags, iree_hal_channel_t** out_split_channel) {
   iree_hal_hw_emulator_channel_t* channel = iree_hal_hw_emulator_channel_cast(base_channel);
+  *out_split_channel = NULL;
 
-  // TODO(null): split the channel and get any native resources required.
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "channel splitting not implemented");
+  if (color == IREE_HAL_CHANNEL_NO_COLOR) {
+    // Not a participant in the new group.
+    return iree_ok_status();
+  }
 
-  // Wrap the split channel resources in a new HAL channel.
+  // With only one participant to begin with, any split (regardless of key)
+  // trivially yields another single-participant channel.
   iree_hal_hw_emulator_channel_t* split_channel = NULL;
-  if (iree_status_is_ok(status)) {
-    status =
-        iree_allocator_malloc(channel->host_allocator, sizeof(*split_channel),
-                              (void**)&split_channel);
-  }
-  if (iree_status_is_ok(status)) {
-    iree_hal_resource_initialize(&iree_hal_hw_emulator_channel_vtable,
-                                 &split_channel->resource);
-    split_channel->host_allocator = channel->host_allocator;
-    split_channel->parent_channel = base_channel;
-    iree_hal_channel_retain(base_channel);
+  IREE_RETURN_IF_ERROR(
+      iree_allocator_malloc(channel->host_allocator, sizeof(*split_channel),
+                            (void**)&split_channel));
+  iree_hal_resource_initialize(&iree_hal_hw_emulator_channel_vtable,
+                               &split_channel->resource);
+  split_channel->host_allocator = channel->host_allocator;
+  split_channel->parent_channel = base_channel;
+  iree_hal_channel_retain(base_channel);
+  split_channel->rank = 0;
+  split_channel->count = 1;
 
-    // TODO(null): transfer ownership of the implementation resources.
-  }
-
-  if (iree_status_is_ok(status)) {
-    *out_split_channel = (iree_hal_channel_t*)split_channel;
-  } else {
-    iree_hal_channel_release((iree_hal_channel_t*)split_channel);
-  }
-  return status;
+  *out_split_channel = (iree_hal_channel_t*)split_channel;
+  return iree_ok_status();
 }
 
 static void iree_hal_hw_emulator_channel_query_rank_and_count(
@@ -116,12 +131,8 @@ static void iree_hal_hw_emulator_channel_query_rank_and_count(
     int32_t* out_count) {
   const iree_hal_hw_emulator_channel_t* channel =
       iree_hal_hw_emulator_channel_const_cast(base_channel);
-
-  // TODO(null): query the rank and count from the implementation or cache them
-  // locally to avoid overheads (this may be called frequently).
-  (void)channel;
-  *out_rank = 0;
-  *out_count = 0;
+  *out_rank = channel->rank;
+  *out_count = channel->count;
 }
 
 static const iree_hal_channel_vtable_t iree_hal_hw_emulator_channel_vtable = {

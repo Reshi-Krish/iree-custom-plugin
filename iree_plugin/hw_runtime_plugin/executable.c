@@ -29,6 +29,24 @@ static iree_hal_hw_emulator_executable_t* iree_hal_hw_emulator_executable_cast(
   return (iree_hal_hw_emulator_executable_t*)base_value;
 }
 
+// Returns |entry|'s kernel_name as a string view, validating that it is
+// NUL-terminated within the field's fixed capacity.
+static iree_status_t iree_hal_hw_emulator_export_kernel_name(
+    const iree_hal_hw_emulator_executable_export_t* entry,
+    iree_string_view_t* out_name) {
+  const void* nul = memchr(entry->kernel_name, '\0',
+                           IREE_HAL_HW_EMULATOR_KERNEL_NAME_CAPACITY);
+  if (!nul) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "hw_emulator executable export kernel_name is not NUL-terminated "
+        "within %d bytes",
+        IREE_HAL_HW_EMULATOR_KERNEL_NAME_CAPACITY);
+  }
+  *out_name = iree_make_cstring_view(entry->kernel_name);
+  return iree_ok_status();
+}
+
 iree_status_t iree_hal_hw_emulator_executable_create(
     const iree_hal_executable_params_t* executable_params,
     iree_allocator_t host_allocator, iree_hal_executable_t** out_executable) {
@@ -73,6 +91,20 @@ iree_status_t iree_hal_hw_emulator_executable_create(
     }
   }
 
+  // Verify every export names a real, NUL-terminated, registered kernel now
+  // rather than deferring the failure to first dispatch.
+  for (iree_host_size_t i = 0;
+       iree_status_is_ok(status) && i < executable->export_count; ++i) {
+    iree_string_view_t kernel_name;
+    status = iree_hal_hw_emulator_export_kernel_name(&executable->exports[i],
+                                                      &kernel_name);
+    if (iree_status_is_ok(status)) {
+      const iree_hal_hw_emulator_kernel_registration_t* registration = NULL;
+      status = iree_hal_hw_emulator_kernel_registry_lookup(kernel_name,
+                                                            &registration);
+    }
+  }
+
   if (iree_status_is_ok(status)) {
     *out_executable = (iree_hal_executable_t*)executable;
   } else {
@@ -105,10 +137,10 @@ static iree_host_size_t iree_hal_hw_emulator_executable_export_count(
 iree_status_t iree_hal_hw_emulator_executable_lookup_export(
     iree_hal_executable_t* base_executable,
     iree_hal_executable_function_t export_ordinal,
-    const iree_hal_hw_emulator_executable_export_t** out_export) {
+    const iree_hal_hw_emulator_kernel_registration_t** out_registration) {
   iree_hal_hw_emulator_executable_t* executable =
       iree_hal_hw_emulator_executable_cast(base_executable);
-  *out_export = NULL;
+  *out_registration = NULL;
   if (!iree_hal_executable_function_is_index_in_range(
           export_ordinal, executable->export_count)) {
     return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
@@ -116,10 +148,13 @@ iree_status_t iree_hal_hw_emulator_executable_lookup_export(
                             " out of range (count: %" PRIhsz ")",
                             export_ordinal.value, executable->export_count);
   }
-  *out_export =
-      &executable
-           ->exports[iree_hal_executable_function_index(export_ordinal)];
-  return iree_ok_status();
+  const iree_hal_hw_emulator_executable_export_t* entry =
+      &executable->exports[iree_hal_executable_function_index(export_ordinal)];
+  iree_string_view_t kernel_name;
+  IREE_RETURN_IF_ERROR(
+      iree_hal_hw_emulator_export_kernel_name(entry, &kernel_name));
+  return iree_hal_hw_emulator_kernel_registry_lookup(kernel_name,
+                                                      out_registration);
 }
 
 static iree_status_t iree_hal_hw_emulator_executable_export_info(
@@ -127,12 +162,12 @@ static iree_status_t iree_hal_hw_emulator_executable_export_info(
     iree_hal_executable_function_t export_ordinal,
     iree_hal_executable_function_info_t* out_info) {
   memset(out_info, 0, sizeof(*out_info));
-  const iree_hal_hw_emulator_executable_export_t* export_entry = NULL;
+  const iree_hal_hw_emulator_kernel_registration_t* registration = NULL;
   IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_executable_lookup_export(
-      base_executable, export_ordinal, &export_entry));
-  out_info->name = export_entry->name;
+      base_executable, export_ordinal, &registration));
+  out_info->name = registration->name;
   out_info->binding_count =
-      (uint16_t)(export_entry->num_inputs + export_entry->num_outputs);
+      (uint16_t)(registration->num_inputs + registration->num_outputs);
   return iree_ok_status();
 }
 
@@ -155,7 +190,10 @@ static iree_status_t iree_hal_hw_emulator_executable_lookup_export_by_name(
   iree_hal_hw_emulator_executable_t* executable =
       iree_hal_hw_emulator_executable_cast(base_executable);
   for (iree_host_size_t i = 0; i < executable->export_count; ++i) {
-    if (iree_string_view_equal(executable->exports[i].name, name)) {
+    iree_string_view_t kernel_name;
+    IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_export_kernel_name(
+        &executable->exports[i], &kernel_name));
+    if (iree_string_view_equal(kernel_name, name)) {
       *out_export_ordinal = iree_hal_executable_function_from_value((uint64_t)i);
       return iree_ok_status();
     }

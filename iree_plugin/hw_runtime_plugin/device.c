@@ -19,6 +19,7 @@
 #include "hw_runtime_plugin/executable_cache.h"
 #include "hw_runtime_plugin/semaphore.h"
 #include "hw_runtime_plugin/status_util.h"
+#include "iree/hal/utils/deferred_command_buffer.h"
 #include "iree/hal/utils/file_registry.h"
 #include "iree/hal/utils/file_transfer.h"
 #include "iree/hal/utils/queue_emulation.h"
@@ -264,10 +265,12 @@ static iree_status_t iree_hal_hw_emulator_device_query_i64(
   }
 
   if (iree_string_view_equal(category, IREE_SV("hal.executable.format"))) {
-    // NOTE: this is a fuzzy match and can allow multiple formats to be used
-    // (this should return 1 for any format supported).
-    // TODO(null): match a format and return true.
-    *out_value = 0;
+    // Only the one format we know how to load (see executable_cache.c's
+    // can_prepare_format, which must agree with this).
+    *out_value = iree_string_view_equal(
+                     key, IREE_SV(IREE_HAL_HW_EMULATOR_EXECUTABLE_FORMAT))
+                     ? 1
+                     : 0;
     return iree_ok_status();
   }
 
@@ -294,15 +297,16 @@ static iree_status_t iree_hal_hw_emulator_device_query_i64(
 static iree_status_t iree_hal_hw_emulator_device_query_capabilities(
     iree_hal_device_t* base_device,
     iree_hal_device_capabilities_t* out_capabilities) {
-  // TODO(null): populate capabilities based on device features.
-  // For the hw_emulator driver, we return a zeroed struct indicating no special
-  // hardware capabilities. Implementations should populate this with:
-  // - physical_device_uuid: A unique identifier for the physical device
-  // - flags: Capability bits (timeline semaphores, unified memory, etc.)
-  // - semaphore/buffer import/export types: External handle support
-  // - numa_node: NUMA node assignment for the device
-  // - driver_device_handle: Opaque handle to the underlying device
   memset(out_capabilities, 0, sizeof(*out_capabilities));
+  // We implement real (not binary-emulated) timeline semaphores (semaphore.c)
+  // and, per the allocator's design (allocator.c), the emulator's one memory
+  // pool is simultaneously host- and device-visible with no explicit flush/
+  // invalidate required (our buffer flush/invalidate are fence-only no-ops).
+  // Import/export and NUMA/physical-device identification are left
+  // zeroed/unset: not supported.
+  out_capabilities->flags = IREE_HAL_DEVICE_CAPABILITY_TIMELINE_SEMAPHORES |
+                            IREE_HAL_DEVICE_CAPABILITY_UNIFIED_MEMORY |
+                            IREE_HAL_DEVICE_CAPABILITY_HOST_COHERENT;
   return iree_ok_status();
 }
 
@@ -441,26 +445,28 @@ static iree_status_t iree_hal_hw_emulator_device_create_semaphore(
 static iree_hal_semaphore_compatibility_t
 iree_hal_hw_emulator_device_query_semaphore_compatibility(
     iree_hal_device_t* base_device, iree_hal_semaphore_t* semaphore) {
-  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
-
-  // TODO(null): return the appropriate bits for the provided semaphore
-  // indicating how it may be used with this device. The semaphore may have been
-  // created or imported on this device or any other device from the same
-  // driver. Certain implementations may allow semaphores from other drivers to
-  // be used and those can be checked here (though the API to do this isn't
-  // implemented yet).
-  (void)device;
-  iree_hal_semaphore_compatibility_t compatibility =
-      IREE_HAL_SEMAPHORE_COMPATIBILITY_NONE;
-
-  return compatibility;
+  // Any semaphore this driver created supports full host+device wait/signal
+  // (there's no meaningful host/device distinction for a software-emulated
+  // device - queue_execute signals on the same calling thread that would
+  // signal from the "host" side). We don't support import/export (see
+  // semaphore.c) so a semaphore from another driver is never compatible.
+  return iree_hal_hw_emulator_semaphore_isa(semaphore)
+             ? IREE_HAL_SEMAPHORE_COMPATIBILITY_ALL
+             : IREE_HAL_SEMAPHORE_COMPATIBILITY_NONE;
 }
 
 static iree_status_t iree_hal_hw_emulator_device_query_queue_pool_backend(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity,
     iree_hal_queue_pool_backend_t* out_backend) {
+  // Real pool backends (slab_provider/notification/epoch_query) are
+  // substantial infrastructure (device-group topology, epoch-based
+  // reclamation) that this single-device emulator has no need for yet.
+  // queue_alloca/queue_dealloca below implement the non-pooled fallback
+  // (a plain allocation performed in queue order) that callers get when no
+  // pool backend is available.
   return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                          "queue pool backend not implemented");
+                          "hw_emulator has no queue pool backend; "
+                          "queue_alloca falls back to plain allocation");
 }
 
 static iree_status_t iree_hal_hw_emulator_device_queue_alloca(
@@ -470,18 +476,17 @@ static iree_status_t iree_hal_hw_emulator_device_queue_alloca(
     iree_hal_pool_t* pool, iree_hal_buffer_params_t params,
     iree_device_size_t allocation_size, iree_hal_alloca_flags_t flags,
     iree_hal_buffer_t** IREE_RESTRICT out_buffer) {
-  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
-
-  // TODO(null): perform an allocation of a transient buffer in queue order.
-  // The allocation may be used on any queue set in the provided queue affinity.
-  // Deallocation via queue_dealloca is preferred but users are allowed to
-  // deallocate the buffer on the host via iree_hal_buffer_release even if they
-  // allocated it with queue_alloca.
-  (void)device;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "queue alloca not implemented");
-
-  return status;
+  // No pool backend (see query_queue_pool_backend above), so |pool| is
+  // always NULL in practice (there's no way to construct one against this
+  // device). "Queue order" for a fully synchronous device is trivial: wait,
+  // then allocate exactly as iree_hal_allocator_allocate_buffer would.
+  IREE_RETURN_IF_ERROR(iree_hal_semaphore_list_wait(
+      wait_semaphore_list, iree_infinite_timeout(), IREE_ASYNC_WAIT_FLAG_NONE));
+  IREE_RETURN_IF_ERROR(iree_hal_allocator_allocate_buffer(
+      iree_hal_device_allocator(base_device), params, allocation_size,
+      out_buffer));
+  return iree_hal_semaphore_list_signal(signal_semaphore_list,
+                                        /*frontier=*/NULL);
 }
 
 static iree_status_t iree_hal_hw_emulator_device_queue_dealloca(
@@ -489,20 +494,13 @@ static iree_status_t iree_hal_hw_emulator_device_queue_dealloca(
     const iree_hal_semaphore_list_t wait_semaphore_list,
     const iree_hal_semaphore_list_t signal_semaphore_list,
     iree_hal_buffer_t* buffer, iree_hal_dealloca_flags_t flags) {
-  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
-
-  // TODO(null): perform a deallocation of the transient buffer in queue order.
-  // Only buffers allocated with queue_alloca on the same device will be passed.
-  // Note that different queues on the same device may have allocated the buffer
-  // and if the same queue must deallocate it the implementation will need to
-  // track that on the buffer. The user is allowed to deallocate the buffer on
-  // the host via iree_hal_buffer_release even if they allocated it with
-  // queue_alloca.
-  (void)device;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "queue dealloca not implemented");
-
-  return status;
+  // hw_allocate is bump-allocated with no per-buffer free (see allocator.c):
+  // there is nothing to reclaim early here beyond preserving queue order.
+  // The buffer's storage is actually released when its last reference drops.
+  IREE_RETURN_IF_ERROR(iree_hal_semaphore_list_wait(
+      wait_semaphore_list, iree_infinite_timeout(), IREE_ASYNC_WAIT_FLAG_NONE));
+  return iree_hal_semaphore_list_signal(signal_semaphore_list,
+                                        /*frontier=*/NULL);
 }
 
 static iree_status_t iree_hal_hw_emulator_device_queue_fill(
@@ -642,41 +640,37 @@ static iree_status_t iree_hal_hw_emulator_device_queue_execute(
     iree_hal_execute_flags_t flags) {
   iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
-  // TODO(null): implement a wait, execute, and signal queue operation. The
-  // queue affinity can be used to determine which top-level execution resources
-  // are to be used when executing and it can be assumed that all resources
-  // required for execution are accessible on those queues. If more than one
-  // queue is specified the implementation may use any it prefers from the set.
+  // There is only one (fully synchronous) queue: wait for inputs, apply the
+  // recorded command buffer against the applier (which itself blocks until
+  // any dispatched kernel's hw_execute_async completes - see
+  // command_buffer.c), then signal outputs, all on the calling thread.
+  //
+  // This does block the calling thread rather than returning immediately and
+  // completing the work elsewhere (as a real device with independent
+  // hardware queues would, and as hw_execute_async already does for the
+  // dispatch itself one level down) - acceptable for now given our
+  // single-dispatch milestone and the fact that the underlying emulator only
+  // supports one execution in flight anyway; revisit if genuine
+  // submit-and-continue concurrency is needed later.
+  IREE_RETURN_IF_ERROR(iree_hal_semaphore_list_wait(
+      wait_semaphore_list, iree_infinite_timeout(), IREE_ASYNC_WAIT_FLAG_NONE));
 
-  // TODO(null): an optional binding table is provided for indirect command
-  // buffers (those who have a binding_capacity > 0). The binding table must be
-  // captured by the implementation as they may be mutated or freed by the
-  // caller immediately after this call returns.
+  // command_buffer may be NULL for a signal-only submission.
+  if (command_buffer != NULL) {
+    IREE_RETURN_IF_ERROR(iree_hal_deferred_command_buffer_apply(
+        command_buffer, device->applier, binding_table));
+  }
 
-  // TODO(null): do this async - callers may be submitting work to multiple
-  // devices or queues on the same device from the same thread and blocking here
-  // will prevent both concurrency and pipelining.
-
-  (void)device;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "queue execute not implemented");
-
-  return status;
+  return iree_hal_semaphore_list_signal(signal_semaphore_list,
+                                        /*frontier=*/NULL);
 }
 
 static iree_status_t iree_hal_hw_emulator_device_queue_flush(
     iree_hal_device_t* base_device, iree_hal_queue_affinity_t queue_affinity) {
-  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
-
-  // TODO(null): though buffering queue operations is not recommended if any
-  // buffering has been performed it must be flushed here. Callers may be
-  // indicating that they are about to suspend themselves waiting for submitted
-  // work to complete.
-  (void)device;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "queue flush not implemented");
-
-  return status;
+  // No-op: queue_execute (and the emulated queue_fill/copy/etc that funnel
+  // through it) runs synchronously on the calling thread and never buffers
+  // work, so there is never anything outstanding to flush.
+  return iree_ok_status();
 }
 
 static iree_status_t iree_hal_hw_emulator_device_profiling_begin(

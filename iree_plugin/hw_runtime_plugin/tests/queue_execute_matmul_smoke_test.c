@@ -4,14 +4,17 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-// End-to-end smoke test for the executable + command_buffer path: prepares
-// an executable wrapping hardware_kernels' matmul_kernel, records a single
-// dispatch against it into a real (deferred) command buffer, applies that
-// recording against the device's applier - standing in for what
-// queue_execute will do once implemented - and checks the computed result.
-// This is the closest thing to the project's stated milestone
-// (linalg.matmul -> custom dispatch -> HAL -> emulator -> custom kernel)
-// achievable before a compiler exists to emit the dispatch itself.
+// End-to-end smoke test of the full runtime submission path: prepares an
+// executable naming the "matmul" kernel (resolved at load time through the
+// static kernel_registry.h, NOT a function pointer embedded in
+// executable_data - see executable.h for why that distinction matters),
+// records a single dispatch into a real (deferred) command buffer, and
+// submits it through the actual production iree_hal_device_queue_execute -
+// the same call the IREE VM/runtime makes for every compiled program -
+// signaling completion on a real semaphore exactly as a real caller would
+// wait on. This is the project's stated milestone (linalg.matmul -> custom
+// dispatch -> HAL -> emulator -> custom kernel) realized at the runtime
+// layer, ahead of a compiler that can emit the dispatch itself.
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -19,21 +22,14 @@
 
 #include "hardwareEmulator.h"
 #include "hw_runtime_plugin/api.h"
-#include "hw_runtime_plugin/device.h"
 #include "hw_runtime_plugin/executable.h"
 #include "iree/async/util/proactor_pool.h"
 #include "iree/base/api.h"
 #include "iree/hal/api.h"
-#include "iree/hal/utils/deferred_command_buffer.h"
 #include "matmul_kernel.h"
 
 static const iree_hal_hw_emulator_executable_export_t kExports[] = {
-    {
-        .name = IREE_SVL("matmul"),
-        .kernel = matmul_kernel,
-        .num_inputs = 2,
-        .num_outputs = 1,
-    },
+    {.kernel_name = "matmul"},
 };
 
 int main(int argc, char** argv) {
@@ -138,12 +134,28 @@ int main(int argc, char** argv) {
       config, constants, binding_list, IREE_HAL_DISPATCH_FLAG_NONE));
   IREE_CHECK_OK(iree_hal_command_buffer_end(recorder));
 
-  // Apply the recording against the device's applier - standing in for
-  // queue_execute, which isn't implemented yet (see device.h).
-  iree_hal_command_buffer_t* applier =
-      iree_hal_hw_emulator_device_debug_applier(device);
-  IREE_CHECK_OK(iree_hal_deferred_command_buffer_apply(
-      recorder, applier, iree_hal_buffer_binding_table_empty()));
+  // Submit through the real production path: wait on nothing, execute, and
+  // signal a completion semaphore, exactly as the IREE VM does for every
+  // compiled program's dispatch.
+  iree_hal_semaphore_t* completion_semaphore = NULL;
+  IREE_CHECK_OK(iree_hal_semaphore_create(device, IREE_HAL_QUEUE_AFFINITY_ANY,
+                                          /*initial_value=*/0,
+                                          IREE_HAL_SEMAPHORE_FLAG_NONE,
+                                          &completion_semaphore));
+  const iree_hal_semaphore_list_t wait_semaphores = {0, NULL, NULL};
+  uint64_t signal_value = 1;
+  const iree_hal_semaphore_list_t signal_semaphores = {
+      .count = 1,
+      .semaphores = &completion_semaphore,
+      .payload_values = &signal_value,
+  };
+  IREE_CHECK_OK(iree_hal_device_queue_execute(
+      device, IREE_HAL_QUEUE_AFFINITY_ANY, wait_semaphores, signal_semaphores,
+      recorder, iree_hal_buffer_binding_table_empty(),
+      IREE_HAL_EXECUTE_FLAG_NONE));
+  IREE_CHECK_OK(iree_hal_semaphore_wait(completion_semaphore, signal_value,
+                                        iree_infinite_timeout(),
+                                        IREE_ASYNC_WAIT_FLAG_NONE));
 
   float actual_c[4];
   IREE_CHECK_OK(
@@ -159,6 +171,7 @@ int main(int argc, char** argv) {
                         : iree_make_status(IREE_STATUS_INTERNAL,
                                            "matmul result mismatch"));
 
+  iree_hal_semaphore_release(completion_semaphore);
   iree_hal_command_buffer_release(recorder);
   iree_hal_buffer_release(buffer_a);
   iree_hal_buffer_release(buffer_b);
@@ -169,6 +182,6 @@ int main(int argc, char** argv) {
   iree_hal_driver_release(driver);
 
   fprintf(stdout,
-          "hw_emulator command_buffer/executable matmul smoke test passed\n");
+          "hw_emulator queue_execute matmul milestone smoke test passed\n");
   return 0;
 }

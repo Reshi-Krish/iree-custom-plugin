@@ -114,18 +114,27 @@ static iree_status_t iree_hal_hw_emulator_allocator_query_memory_heaps(
     iree_host_size_t capacity,
     iree_hal_allocator_memory_heap_t* IREE_RESTRICT heaps,
     iree_host_size_t* IREE_RESTRICT out_count) {
-  iree_hal_hw_emulator_allocator_t* allocator =
-      iree_hal_hw_emulator_allocator_cast(base_allocator);
-
-  // TODO(null): return heap information. This is called at least once with a
-  // capacity that may be 0 (indicating a query for the total count) and the
-  // heaps should only be populated if capacity is sufficient to store all of
-  // them.
-  (void)allocator;
-  iree_status_t status =
-      iree_make_status(IREE_STATUS_UNIMPLEMENTED, "heap query not implemented");
-
-  return status;
+  // One heap, matching the allocator's single unified memory pool (see
+  // query_buffer_compatibility above). max_allocation_size is left unbounded
+  // (hw_allocate fails naturally with OUT_OF_MEMORY if the pool is
+  // exhausted) and min_alignment is 1: hw_allocate's bump allocator provides
+  // no alignment guarantee today.
+  const iree_host_size_t count = 1;
+  if (out_count) *out_count = count;
+  if (capacity < count) return iree_status_from_code(IREE_STATUS_OUT_OF_RANGE);
+  heaps[0] = (iree_hal_allocator_memory_heap_t){
+      .type = IREE_HAL_MEMORY_TYPE_HOST_VISIBLE |
+              IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE |
+              IREE_HAL_MEMORY_TYPE_DEVICE_LOCAL,
+      .allowed_usage = IREE_HAL_BUFFER_USAGE_TRANSFER |
+                       IREE_HAL_BUFFER_USAGE_DISPATCH |
+                       IREE_HAL_BUFFER_USAGE_MAPPING_SCOPED |
+                       IREE_HAL_BUFFER_USAGE_MAPPING_PERSISTENT |
+                       IREE_HAL_BUFFER_USAGE_MAPPING_ACCESS_RANDOM,
+      .max_allocation_size = ~(iree_device_size_t)0,
+      .min_alignment = 1,
+  };
+  return iree_ok_status();
 }
 
 static iree_hal_buffer_compatibility_t
