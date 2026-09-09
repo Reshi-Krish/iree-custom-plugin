@@ -27,4 +27,15 @@ iree_status_t iree_hal_hw_emulator_buffer_wrap(
     iree_hal_buffer_release_callback_t release_callback,
     iree_allocator_t host_allocator, iree_hal_buffer_t** out_buffer);
 
+// Returns the hw_emulator hardware buffer handle (an offset/size pair into
+// the device's memory pool) backing the [local_byte_offset,
+// local_byte_offset + local_byte_length) region of |base_buffer|, which must
+// have been created by this driver's allocator. |local_byte_length| may be
+// IREE_HAL_WHOLE_BUFFER. Used by command_buffer.c's applier to resolve
+// dispatch bindings for hw_execute_async, which does its own hw_buffer_map()
+// resolution and so needs the handle rather than a mapped host pointer.
+iree_status_t iree_hal_hw_emulator_buffer_handle(
+    iree_hal_buffer_t* base_buffer, iree_device_size_t local_byte_offset,
+    iree_device_size_t local_byte_length, hw_buffer_t* out_hw_buffer);
+
 #endif  // IREE_HAL_DRIVERS_HW_EMULATOR_BUFFER_H_

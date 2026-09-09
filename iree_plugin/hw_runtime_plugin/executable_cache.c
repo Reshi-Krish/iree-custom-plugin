@@ -100,8 +100,9 @@ static bool iree_hal_hw_emulator_executable_cache_can_prepare_format(
   // cases where support is conditional (versions of a format) or multiple
   // formats are handled. This matches the `IREE::HAL::ExecutableTargetAttr`
   // format field as set in the compiler.
-  return iree_string_view_equal(executable_format,
-                                iree_make_cstring_view("{hw_emulator-executable}"));
+  return iree_string_view_equal(
+      executable_format,
+      iree_make_cstring_view(IREE_HAL_HW_EMULATOR_EXECUTABLE_FORMAT));
 }
 
 static iree_status_t iree_hal_hw_emulator_executable_cache_prepare_executable(

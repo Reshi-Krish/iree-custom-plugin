@@ -54,8 +54,16 @@ typedef struct iree_hal_hw_emulator_device_t {
 
   // The single emulated hardware instance and memory pool backing this
   // device, owned for the device's lifetime. Passed (borrowed) down to the
-  // allocator and, later, to command execution.
+  // allocator, command buffers, and semaphores.
   hw_device_t* hw_device;
+
+  // Backing storage for recorded (deferred) command buffers created by
+  // create_command_buffer.
+  iree_arena_block_pool_t command_buffer_block_pool;
+
+  // The single "applier" command buffer used to execute recorded command
+  // buffers against hw_device; see command_buffer.h.
+  iree_hal_command_buffer_t* applier;
 
   // Proactor pool for async I/O. Retained for the lifetime of the device to
   // ensure proactor threads outlive all device resources (semaphores, etc.).
@@ -116,6 +124,9 @@ iree_status_t iree_hal_hw_emulator_device_create(
       identifier, &device->identifier,
       (char*)device + total_size - identifier.size);
   device->host_allocator = host_allocator;
+  iree_arena_block_pool_initialize(/*total_block_size=*/32 * 1024,
+                                   host_allocator,
+                                   &device->command_buffer_block_pool);
 
   // Retain the proactor pool and acquire a proactor for this device.
   device->proactor_pool = create_params->proactor_pool;
@@ -133,6 +144,11 @@ iree_status_t iree_hal_hw_emulator_device_create(
     status = iree_hal_hw_emulator_allocator_create(
         (iree_hal_device_t*)device, device->hw_device, host_allocator,
         &device->device_allocator);
+  }
+
+  if (iree_status_is_ok(status)) {
+    status = iree_hal_hw_emulator_applier_create(
+        device->hw_device, host_allocator, &device->applier);
   }
 
   if (iree_status_is_ok(status)) {
@@ -169,6 +185,8 @@ static void iree_hal_hw_emulator_device_destroy(iree_hal_device_t* base_device) 
   // and joined first.
 
   iree_hal_hw_emulator_device_clear_topology_info(device);
+  iree_hal_command_buffer_release(device->applier);
+  iree_arena_block_pool_deinitialize(&device->command_buffer_block_pool);
   iree_hal_allocator_release(device->device_allocator);
   iree_hal_channel_provider_release(device->channel_provider);
   iree_async_proactor_pool_release(device->proactor_pool);
@@ -356,12 +374,16 @@ static iree_status_t iree_hal_hw_emulator_device_create_command_buffer(
     iree_hal_queue_affinity_t queue_affinity, iree_host_size_t binding_capacity,
     iree_hal_command_buffer_t** out_command_buffer) {
   iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
-  // TODO(null): pass any additional resources required to create the command
-  // buffer. The implementation could pool command buffers here.
   return iree_hal_hw_emulator_command_buffer_create(
       iree_hal_device_allocator(base_device), mode, command_categories,
-      queue_affinity, binding_capacity, device->host_allocator,
-      out_command_buffer);
+      queue_affinity, binding_capacity, &device->command_buffer_block_pool,
+      device->host_allocator, out_command_buffer);
+}
+
+iree_hal_command_buffer_t* iree_hal_hw_emulator_device_debug_applier(
+    iree_hal_device_t* base_device) {
+  iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
+  return device->applier;
 }
 
 static iree_status_t iree_hal_hw_emulator_device_create_event(

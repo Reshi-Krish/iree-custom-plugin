@@ -141,22 +141,25 @@ iree_hal_hw_emulator_allocator_query_buffer_compatibility(
   iree_hal_buffer_compatibility_t compatibility =
       IREE_HAL_BUFFER_COMPATIBILITY_ALLOCATABLE;
 
-  // Buffers can only be used on the queue if they are device visible. This
-  // matches devices with discrete memory spaces even though our emulator
-  // does not have one, making it easier to catch buffer definition issues
-  // that would surface on real hardware.
-  if (iree_all_bits_set(params->type, IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE)) {
-    if (iree_any_bit_set(params->usage, IREE_HAL_BUFFER_USAGE_TRANSFER)) {
-      compatibility |= IREE_HAL_BUFFER_COMPATIBILITY_QUEUE_TRANSFER;
-    }
-    if (iree_any_bit_set(params->usage, IREE_HAL_BUFFER_USAGE_DISPATCH)) {
-      compatibility |= IREE_HAL_BUFFER_COMPATIBILITY_QUEUE_DISPATCH;
-    }
+  // Unlike a driver with a discrete device memory space (where gating queue
+  // compatibility on an explicit IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE request
+  // helps catch buffer-definition bugs early), hw_emulator only ever
+  // allocates from its one unified pool, which *is* the device's memory - so
+  // there's no real "did the caller mean this for the device" question to
+  // ask. Queue compatibility is granted purely from the requested usage.
+  if (iree_any_bit_set(params->usage, IREE_HAL_BUFFER_USAGE_TRANSFER)) {
+    compatibility |= IREE_HAL_BUFFER_COMPATIBILITY_QUEUE_TRANSFER;
+  }
+  if (iree_any_bit_set(params->usage, IREE_HAL_BUFFER_USAGE_DISPATCH)) {
+    compatibility |= IREE_HAL_BUFFER_COMPATIBILITY_QUEUE_DISPATCH;
   }
 
-  // The pool is always host-visible; there's no separate device address
-  // space to place buffers optimally within.
-  params->type |= IREE_HAL_MEMORY_TYPE_HOST_VISIBLE;
+  // The pool is simultaneously host- and device-visible/local (there is only
+  // the one address space), so there's no separate memory space to place
+  // buffers optimally within.
+  params->type |= IREE_HAL_MEMORY_TYPE_HOST_VISIBLE |
+                  IREE_HAL_MEMORY_TYPE_DEVICE_VISIBLE |
+                  IREE_HAL_MEMORY_TYPE_DEVICE_LOCAL;
   params->type &= ~IREE_HAL_MEMORY_TYPE_OPTIMAL;
 
   // Every buffer is mappable: hw_buffer_map() always resolves to a host

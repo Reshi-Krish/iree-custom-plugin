@@ -6,150 +6,121 @@
 
 #include "hw_runtime_plugin/command_buffer.h"
 
+#include <time.h>
+
 #include "hw_runtime_plugin/buffer.h"
-#include "hw_runtime_plugin/channel.h"
 #include "hw_runtime_plugin/executable.h"
+#include "hw_runtime_plugin/status_util.h"
+#include "iree/hal/utils/deferred_command_buffer.h"
 
 //===----------------------------------------------------------------------===//
-// iree_hal_hw_emulator_command_buffer_t
+// iree_hal_hw_emulator_command_buffer_t (recorder)
 //===----------------------------------------------------------------------===//
-
-typedef struct iree_hal_hw_emulator_command_buffer_t {
-  iree_hal_command_buffer_t base;
-  iree_allocator_t host_allocator;
-} iree_hal_hw_emulator_command_buffer_t;
-
-static const iree_hal_command_buffer_vtable_t
-    iree_hal_hw_emulator_command_buffer_vtable;
-
-static iree_hal_hw_emulator_command_buffer_t* iree_hal_hw_emulator_command_buffer_cast(
-    iree_hal_command_buffer_t* base_value) {
-  IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_hw_emulator_command_buffer_vtable);
-  return (iree_hal_hw_emulator_command_buffer_t*)base_value;
-}
+// There is nothing hardware-specific about *recording* commands, only about
+// *applying* them (see the applier below), so this is a thin pass-through to
+// IREE's generic deferred command buffer.
 
 iree_status_t iree_hal_hw_emulator_command_buffer_create(
     iree_hal_allocator_t* device_allocator, iree_hal_command_buffer_mode_t mode,
     iree_hal_command_category_t command_categories,
     iree_hal_queue_affinity_t queue_affinity, iree_host_size_t binding_capacity,
-    iree_allocator_t host_allocator,
+    iree_arena_block_pool_t* block_pool, iree_allocator_t host_allocator,
     iree_hal_command_buffer_t** out_command_buffer) {
-  IREE_ASSERT_ARGUMENT(out_command_buffer);
-  IREE_TRACE_ZONE_BEGIN(z0);
-  *out_command_buffer = NULL;
-
-  iree_hal_hw_emulator_command_buffer_t* command_buffer = NULL;
-  IREE_RETURN_AND_END_ZONE_IF_ERROR(
-      z0,
-      iree_allocator_malloc(host_allocator,
-                            sizeof(*command_buffer) +
-                                iree_hal_command_buffer_validation_state_size(
-                                    mode, binding_capacity),
-                            (void**)&command_buffer));
-  iree_hal_command_buffer_initialize(
+  return iree_hal_deferred_command_buffer_create(
       device_allocator, mode, command_categories, queue_affinity,
-      binding_capacity, (uint8_t*)command_buffer + sizeof(*command_buffer),
-      &iree_hal_hw_emulator_command_buffer_vtable, &command_buffer->base);
-  command_buffer->host_allocator = host_allocator;
-
-  // TODO(null): allocate any additional resources for managing command buffer
-  // state. Some implementations may have their own command buffer/command list
-  // APIs this can route to or may need to implement it all themselves using
-  // iree_arena_t/block pools. Implementations should also retain any resources
-  // used during the recording and can use iree_hal_resource_set_t* to make that
-  // easier.
-  iree_status_t status = iree_make_status(
-      IREE_STATUS_UNIMPLEMENTED, "command buffers not yet implemented");
-
-  if (iree_status_is_ok(status)) {
-    *out_command_buffer = &command_buffer->base;
-  } else {
-    iree_hal_command_buffer_release(&command_buffer->base);
-  }
-  IREE_TRACE_ZONE_END(z0);
-  return status;
-}
-
-static void iree_hal_hw_emulator_command_buffer_destroy(
-    iree_hal_command_buffer_t* base_command_buffer) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-  iree_allocator_t host_allocator = command_buffer->host_allocator;
-  IREE_TRACE_ZONE_BEGIN(z0);
-
-  // TODO(null): release any implementation resources and
-  // iree_hal_resource_set_t.
-
-  iree_allocator_free(host_allocator, command_buffer);
-
-  IREE_TRACE_ZONE_END(z0);
+      binding_capacity, block_pool, host_allocator, out_command_buffer);
 }
 
 bool iree_hal_hw_emulator_command_buffer_isa(
     iree_hal_command_buffer_t* command_buffer) {
-  return iree_hal_resource_is(&command_buffer->resource,
-                              &iree_hal_hw_emulator_command_buffer_vtable);
+  return iree_hal_deferred_command_buffer_isa(command_buffer);
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_begin(
+//===----------------------------------------------------------------------===//
+// iree_hal_hw_emulator_applier_t
+//===----------------------------------------------------------------------===//
+// The applier is the target of iree_hal_deferred_command_buffer_apply: it
+// executes each recorded command immediately, synchronously, in order. Every
+// command except dispatch is a plain host-memory operation (fill/copy/update
+// map straight onto IREE's generic host-buffer helpers); dispatch is the one
+// truly hardware-specific piece, and even that only differs from the others
+// in that it runs the kernel on hw_execute_async's background thread and
+// blocks until it completes before returning - the emulator has no notion of
+// overlapping dispatches yet (see hardwareEmulator.h).
+
+typedef struct iree_hal_hw_emulator_applier_t {
+  iree_hal_command_buffer_t base;
+  iree_allocator_t host_allocator;
+
+  // Borrowed from the owning device.
+  hw_device_t* hw_device;
+} iree_hal_hw_emulator_applier_t;
+
+static const iree_hal_command_buffer_vtable_t iree_hal_hw_emulator_applier_vtable;
+
+static iree_hal_hw_emulator_applier_t* iree_hal_hw_emulator_applier_cast(
+    iree_hal_command_buffer_t* base_value) {
+  IREE_HAL_ASSERT_TYPE(base_value, &iree_hal_hw_emulator_applier_vtable);
+  return (iree_hal_hw_emulator_applier_t*)base_value;
+}
+
+iree_status_t iree_hal_hw_emulator_applier_create(
+    hw_device_t* hw_device, iree_allocator_t host_allocator,
+    iree_hal_command_buffer_t** out_command_buffer) {
+  IREE_ASSERT_ARGUMENT(hw_device);
+  IREE_ASSERT_ARGUMENT(out_command_buffer);
+  *out_command_buffer = NULL;
+
+  iree_hal_hw_emulator_applier_t* applier = NULL;
+  IREE_RETURN_IF_ERROR(iree_allocator_malloc(host_allocator, sizeof(*applier),
+                                             (void**)&applier));
+  // UNVALIDATED: the applier is never exposed to user code (only fed
+  // trusted, already-recorded commands from queue_execute), so there's
+  // nothing useful for the validation layer to check here.
+  iree_hal_command_buffer_initialize(
+      /*device_allocator=*/NULL,
+      IREE_HAL_COMMAND_BUFFER_MODE_ONE_SHOT |
+          IREE_HAL_COMMAND_BUFFER_MODE_UNVALIDATED,
+      IREE_HAL_COMMAND_CATEGORY_ANY, IREE_HAL_QUEUE_AFFINITY_ANY,
+      /*binding_capacity=*/0, /*validation_state=*/NULL,
+      &iree_hal_hw_emulator_applier_vtable, &applier->base);
+  applier->host_allocator = host_allocator;
+  applier->hw_device = hw_device;
+
+  *out_command_buffer = &applier->base;
+  return iree_ok_status();
+}
+
+static void iree_hal_hw_emulator_applier_destroy(
     iree_hal_command_buffer_t* base_command_buffer) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): if the implementation needs to route the begin to the
-  // implementation it can be done here. Note that creation may happen much
-  // earlier than recording and any expensive work should be deferred until this
-  // point to make profiling easier.
-  (void)command_buffer;
-  iree_status_t status =
-      iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                       "command buffer recording start not implemented");
-
-  return status;
+  iree_hal_hw_emulator_applier_t* applier =
+      iree_hal_hw_emulator_applier_cast(base_command_buffer);
+  iree_allocator_free(applier->host_allocator, applier);
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_end(
+static iree_status_t iree_hal_hw_emulator_applier_begin(
     iree_hal_command_buffer_t* base_command_buffer) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): if recording requires multiple passes any fixup/linking can
-  // happen here. Recording-only resources are no longer needed after this point
-  // and can be disposed.
-  (void)command_buffer;
-  iree_status_t status = iree_make_status(
-      IREE_STATUS_UNIMPLEMENTED, "command buffer finalization not implemented");
-
-  return status;
+  return iree_ok_status();
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_begin_debug_group(
+static iree_status_t iree_hal_hw_emulator_applier_end(
+    iree_hal_command_buffer_t* base_command_buffer) {
+  return iree_ok_status();
+}
+
+static iree_status_t iree_hal_hw_emulator_applier_begin_debug_group(
     iree_hal_command_buffer_t* base_command_buffer, iree_string_view_t label,
     iree_hal_label_color_t label_color,
     const iree_hal_label_location_t* location) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): begin a nested debug group (push) if the implementation has a
-  // way to insert markers. This is informational and can be ignored.
-  (void)command_buffer;
-
   return iree_ok_status();
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_end_debug_group(
+static iree_status_t iree_hal_hw_emulator_applier_end_debug_group(
     iree_hal_command_buffer_t* base_command_buffer) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): end a nested debug group (pop). Always called 1:1 in stack
-  // order with begin_debug_group.
-  (void)command_buffer;
-
   return iree_ok_status();
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_execution_barrier(
+static iree_status_t iree_hal_hw_emulator_applier_execution_barrier(
     iree_hal_command_buffer_t* base_command_buffer,
     iree_hal_execution_stage_t source_stage_mask,
     iree_hal_execution_stage_t target_stage_mask,
@@ -158,50 +129,28 @@ static iree_status_t iree_hal_hw_emulator_command_buffer_execution_barrier(
     const iree_hal_memory_barrier_t* memory_barriers,
     iree_host_size_t buffer_barrier_count,
     const iree_hal_buffer_barrier_t* buffer_barriers) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): barriers split the execution sequence into all operations that
-  // did happen before the barrier and all that will happen after. In
-  // implementations that have no concurrency this can be a no-op. This is
-  // effectively just a signal_event followed by a wait_event.
-  (void)command_buffer;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "execution barriers not implemented");
-
-  return status;
+  // The applier already executes every command synchronously in strict
+  // recorded order (including blocking until a dispatch's kernel finishes),
+  // so a barrier is trivially already satisfied by the time it is reached.
+  return iree_ok_status();
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_signal_event(
+static iree_status_t iree_hal_hw_emulator_applier_signal_event(
     iree_hal_command_buffer_t* base_command_buffer, iree_hal_event_t* event,
     iree_hal_execution_stage_t source_stage_mask) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): WIP API and may change; signals the given event allowing
-  // waiters to proceed.
-  (void)command_buffer;
-  iree_status_t status =
-      iree_make_status(IREE_STATUS_UNIMPLEMENTED, "events not implemented");
-
-  return status;
+  // Same reasoning as execution_barrier: strict sequential execution means
+  // anything that would wait on this event later will find it already
+  // satisfied, so there's nothing to actually track.
+  return iree_ok_status();
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_reset_event(
+static iree_status_t iree_hal_hw_emulator_applier_reset_event(
     iree_hal_command_buffer_t* base_command_buffer, iree_hal_event_t* event,
     iree_hal_execution_stage_t source_stage_mask) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): WIP API and may change; resets the given event to unsignaled.
-  (void)command_buffer;
-  iree_status_t status =
-      iree_make_status(IREE_STATUS_UNIMPLEMENTED, "events not implemented");
-
-  return status;
+  return iree_ok_status();
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_wait_events(
+static iree_status_t iree_hal_hw_emulator_applier_wait_events(
     iree_hal_command_buffer_t* base_command_buffer,
     iree_host_size_t event_count, const iree_hal_event_t** events,
     iree_hal_execution_stage_t source_stage_mask,
@@ -210,157 +159,152 @@ static iree_status_t iree_hal_hw_emulator_command_buffer_wait_events(
     const iree_hal_memory_barrier_t* memory_barriers,
     iree_host_size_t buffer_barrier_count,
     const iree_hal_buffer_barrier_t* buffer_barriers) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): WIP API and may change; waits on the list of events and enacts
-  // the specified set of barriers. Implementations without fine-grained
-  // tracking can treat this as an execution_barrier and ignore the
-  // memory/buffer barriers provided.
-  (void)command_buffer;
-  iree_status_t status =
-      iree_make_status(IREE_STATUS_UNIMPLEMENTED, "events not implemented");
-
-  return status;
+  return iree_ok_status();
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_advise_buffer(
+static iree_status_t iree_hal_hw_emulator_applier_advise_buffer(
     iree_hal_command_buffer_t* base_command_buffer,
     iree_hal_buffer_ref_t buffer_ref, iree_hal_memory_advise_flags_t flags,
     uint64_t arg0, uint64_t arg1) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): WIP API and may change; this is likely to become an
-  // madvise-like command that can be used to control prefetching and other
-  // cache behavior. The current discard behavior is a hint that the buffer
-  // contents will never be used again and that if they are in a cache they need
-  // not be written back to global memory.
-  (void)command_buffer;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "discard buffer not implemented");
-
-  return status;
+  // Pure hint; nothing to prefetch/discard in the emulator.
+  return iree_ok_status();
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_fill_buffer(
+static iree_status_t iree_hal_hw_emulator_applier_fill_buffer(
     iree_hal_command_buffer_t* base_command_buffer,
     iree_hal_buffer_ref_t target_ref, const void* pattern,
     iree_host_size_t pattern_length, iree_hal_fill_flags_t flags) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): memset on the buffer. The pattern_length is 1, 2, or 4 bytes.
-  // Note that the buffer may be a reference to a binding table slot in which
-  // case it will be provided during submission to a queue.
-  (void)command_buffer;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "fill buffer not implemented");
-
-  return status;
+  return iree_hal_buffer_map_fill(target_ref.buffer, target_ref.offset,
+                                  target_ref.length, pattern, pattern_length);
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_update_buffer(
+static iree_status_t iree_hal_hw_emulator_applier_update_buffer(
     iree_hal_command_buffer_t* base_command_buffer, const void* source_buffer,
     iree_host_size_t source_offset, iree_hal_buffer_ref_t target_ref,
     iree_hal_update_flags_t flags) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): embed and copy a small (~64KB) chunk of host memory to the
-  // target buffer. The source_buffer contents must be captured as they may
-  // change/be freed after this call completes.
-  // Note that the target buffer may be a reference to a binding table slot in
-  // which case it will be provided during submission to a queue.
-  (void)command_buffer;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "update buffer not implemented");
-
-  return status;
+  return iree_hal_buffer_map_write(
+      target_ref.buffer, target_ref.offset,
+      (const uint8_t*)source_buffer + source_offset, target_ref.length);
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_copy_buffer(
+static iree_status_t iree_hal_hw_emulator_applier_copy_buffer(
     iree_hal_command_buffer_t* base_command_buffer,
     iree_hal_buffer_ref_t source_ref, iree_hal_buffer_ref_t target_ref,
     iree_hal_copy_flags_t flags) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): memcpy between two buffers. The buffers must both be
-  // device-visible but may reside on either the host or device.
-  // Note that either buffer may be a reference to a binding table slot in
-  // which case it will be provided during submission to a queue.
-  (void)command_buffer;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "copy buffer not implemented");
-
-  return status;
+  return iree_hal_buffer_map_copy(source_ref.buffer, source_ref.offset,
+                                  target_ref.buffer, target_ref.offset,
+                                  target_ref.length);
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_collective(
+static iree_status_t iree_hal_hw_emulator_applier_collective(
     iree_hal_command_buffer_t* base_command_buffer, iree_hal_channel_t* channel,
     iree_hal_collective_op_t op, uint32_t param, iree_hal_buffer_ref_t send_ref,
     iree_hal_buffer_ref_t recv_ref, iree_device_size_t element_count) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
-
-  // TODO(null): perform the collective operation defined by op. See the headers
-  // for more information. The channel is fixed for a particular recording but
-  // note that either buffer may be a reference to a binding table slot in
-  // which case it will be provided during submission to a queue.
-  (void)command_buffer;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "collectives not implemented");
-
-  return status;
+  // No multi-device story yet for a single emulated accelerator.
+  return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
+                          "collectives not implemented");
 }
 
-static iree_status_t iree_hal_hw_emulator_command_buffer_dispatch(
+static iree_status_t iree_hal_hw_emulator_applier_dispatch(
     iree_hal_command_buffer_t* base_command_buffer,
     iree_hal_executable_t* executable,
     iree_hal_executable_function_t export_ordinal,
     const iree_hal_dispatch_config_t config, iree_const_byte_span_t constants,
     iree_hal_buffer_ref_list_t bindings, iree_hal_dispatch_flags_t flags) {
-  iree_hal_hw_emulator_command_buffer_t* command_buffer =
-      iree_hal_hw_emulator_command_buffer_cast(base_command_buffer);
+  iree_hal_hw_emulator_applier_t* applier =
+      iree_hal_hw_emulator_applier_cast(base_command_buffer);
 
-  // TODO(null): dispatch the specified executable entry point with the given
-  // workgroup count directly or indirectly based on flags. The constants must
-  // be copied into the command buffer as they may be mutated or freed after
-  // this call returns. Note that any of the bindings may be references to
-  // binding table slots in which case they will be provided during submission
-  // to a queue.
-  //
-  // If an INDIRECT_PARAMETERS flag is set then the workgroup count is stored in
-  // the given workgroup count buffer as a uint32_t[3]. The workgroup count may
-  // change up until the barrier immediately prior to the dispatch.
-  //
-  // Arguments are are in the HAL ABI form with constants and bindings unless
-  // CUSTOM_ARGUMENTS or INDIRECT_ARGUMENTS are specified, in which case they
-  // are passed through directly either from the inlined constants provided to
-  // this call or a device visible buffer.
-  (void)command_buffer;
-  iree_status_t status =
-      iree_make_status(IREE_STATUS_UNIMPLEMENTED, "dispatch not implemented");
+  // Our kernel ABI (hw_kernel_fn_t) has no notion of a workgroup grid - a
+  // dispatch is always exactly one kernel invocation over the full bindings -
+  // so config.workgroup_count/workgroup_size are intentionally unused here.
+  // NOTE: callers must still set workgroup_count to something non-zero (e.g.
+  // {1,1,1}): iree_hal_command_buffer_dispatch treats an all-zero count as an
+  // intentional no-op and skips calling us entirely.
+  if (iree_hal_dispatch_uses_indirect_parameters(flags) ||
+      iree_hal_dispatch_uses_custom_arguments(flags)) {
+    return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
+                            "the hw_emulator applier only supports direct "
+                            "dispatch with standard HAL ABI arguments");
+  }
 
-  return status;
+  const iree_hal_hw_emulator_executable_export_t* export_entry = NULL;
+  IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_executable_lookup_export(
+      executable, export_ordinal, &export_entry));
+  const iree_host_size_t expected_bindings =
+      export_entry->num_inputs + export_entry->num_outputs;
+  if (bindings.count != expected_bindings) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "binding count mismatch for export '%.*s': expected %" PRIhsz
+        " (%" PRIhsz " inputs + %" PRIhsz " outputs) but was provided %" PRIhsz,
+        (int)export_entry->name.size, export_entry->name.data,
+        expected_bindings, export_entry->num_inputs, export_entry->num_outputs,
+        bindings.count);
+  }
+
+  enum { kMaxBuffers = 16 };
+  if (export_entry->num_inputs > kMaxBuffers ||
+      export_entry->num_outputs > kMaxBuffers) {
+    return iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "too many input/output buffers for the hw_emulator applier");
+  }
+
+  // Resolve each binding to a hw_buffer_t (an offset/size pair into the
+  // device's memory pool, NOT a host pointer - hw_execute_async does its own
+  // hw_buffer_map() resolution, same as real hardware resolving its own
+  // addresses). Bindings are ordered inputs-then-outputs by convention.
+  hw_buffer_t input_handles[kMaxBuffers];
+  hw_buffer_t output_handles[kMaxBuffers];
+  for (iree_host_size_t i = 0; i < bindings.count; ++i) {
+    hw_buffer_t handle;
+    IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_buffer_handle(
+        bindings.values[i].buffer, bindings.values[i].offset,
+        bindings.values[i].length, &handle));
+    if (i < export_entry->num_inputs) {
+      input_handles[i] = handle;
+    } else {
+      output_handles[i - export_entry->num_inputs] = handle;
+    }
+  }
+
+  IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_status_from_hw(hw_execute_async(
+      applier->hw_device, export_entry->kernel, input_handles,
+      export_entry->num_inputs, output_handles, export_entry->num_outputs,
+      (void*)constants.data)));
+
+  // Block until the kernel actually finishes: hw_execute_async only supports
+  // one execution in flight per device (see hardwareEmulator.h), and
+  // queue_execute's contract is that the work is done by the time it returns
+  // and signals completion - so there is nothing to gain from returning
+  // early here.
+  for (;;) {
+    hw_status_t result;
+    hw_execution_status_t status =
+        hw_query_execution_status(applier->hw_device, &result);
+    if (status == HW_EXECUTION_COMPLETE) return iree_ok_status();
+    if (status == HW_EXECUTION_FAILED) {
+      return iree_hal_hw_emulator_status_from_hw(result);
+    }
+    struct timespec poll_delay = {.tv_sec = 0, .tv_nsec = 1 * 1000 * 1000};
+    nanosleep(&poll_delay, NULL);
+  }
 }
 
-static const iree_hal_command_buffer_vtable_t
-    iree_hal_hw_emulator_command_buffer_vtable = {
-        .destroy = iree_hal_hw_emulator_command_buffer_destroy,
-        .begin = iree_hal_hw_emulator_command_buffer_begin,
-        .end = iree_hal_hw_emulator_command_buffer_end,
-        .begin_debug_group = iree_hal_hw_emulator_command_buffer_begin_debug_group,
-        .end_debug_group = iree_hal_hw_emulator_command_buffer_end_debug_group,
-        .execution_barrier = iree_hal_hw_emulator_command_buffer_execution_barrier,
-        .signal_event = iree_hal_hw_emulator_command_buffer_signal_event,
-        .reset_event = iree_hal_hw_emulator_command_buffer_reset_event,
-        .wait_events = iree_hal_hw_emulator_command_buffer_wait_events,
-        .advise_buffer = iree_hal_hw_emulator_command_buffer_advise_buffer,
-        .fill_buffer = iree_hal_hw_emulator_command_buffer_fill_buffer,
-        .update_buffer = iree_hal_hw_emulator_command_buffer_update_buffer,
-        .copy_buffer = iree_hal_hw_emulator_command_buffer_copy_buffer,
-        .collective = iree_hal_hw_emulator_command_buffer_collective,
-        .dispatch = iree_hal_hw_emulator_command_buffer_dispatch,
+static const iree_hal_command_buffer_vtable_t iree_hal_hw_emulator_applier_vtable = {
+    .destroy = iree_hal_hw_emulator_applier_destroy,
+    .begin = iree_hal_hw_emulator_applier_begin,
+    .end = iree_hal_hw_emulator_applier_end,
+    .begin_debug_group = iree_hal_hw_emulator_applier_begin_debug_group,
+    .end_debug_group = iree_hal_hw_emulator_applier_end_debug_group,
+    .execution_barrier = iree_hal_hw_emulator_applier_execution_barrier,
+    .signal_event = iree_hal_hw_emulator_applier_signal_event,
+    .reset_event = iree_hal_hw_emulator_applier_reset_event,
+    .wait_events = iree_hal_hw_emulator_applier_wait_events,
+    .advise_buffer = iree_hal_hw_emulator_applier_advise_buffer,
+    .fill_buffer = iree_hal_hw_emulator_applier_fill_buffer,
+    .update_buffer = iree_hal_hw_emulator_applier_update_buffer,
+    .copy_buffer = iree_hal_hw_emulator_applier_copy_buffer,
+    .collective = iree_hal_hw_emulator_applier_collective,
+    .dispatch = iree_hal_hw_emulator_applier_dispatch,
 };

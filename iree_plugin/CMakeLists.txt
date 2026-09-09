@@ -25,4 +25,29 @@ external_cc_library(
   PUBLIC
 )
 
+# Same rationale as hardware_emulator above: a plain library from the parent
+# repo, wrapped so it participates correctly in the export set. Used only by
+# tests (real kernels to dispatch against, e.g. matmul_kernel) - the driver
+# itself has no compile-time dependency on any particular kernel.
+set(HW_KERNELS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../hardware_kernels/")
+external_cc_library(
+  PACKAGE
+    hardware_kernels
+  NAME
+    hardware_kernels
+  ROOT
+    ${HW_KERNELS_ROOT}
+  HDRS
+    "include/template_kernel.h"
+    "include/matmul_kernel.h"
+  SRCS
+    "src/template_kernel.c"
+    "src/matmul_kernel.c"
+  INCLUDES
+    "${HW_KERNELS_ROOT}/include"
+  DEPS
+    hardware_emulator::hardware_emulator
+  PUBLIC
+)
+
 add_subdirectory(hw_runtime_plugin)

@@ -14,8 +14,13 @@
 // iree_hal_hw_emulator_device_t
 //===----------------------------------------------------------------------===//
 
-// NOTE: nothing in the skeleton implementation. Device creation and adoption is
-// part of the public API header. This header can contain internal types and
-// functions.
+// Returns the device's internal "applier" command buffer (see
+// command_buffer.h) used to execute recorded command buffers against
+// hw_device. There is no public HAL API for this - queue_execute uses it
+// internally (once implemented) via iree_hal_deferred_command_buffer_apply.
+// Exposed only so tests can exercise record -> apply without a real
+// queue_execute yet.
+iree_hal_command_buffer_t* iree_hal_hw_emulator_device_debug_applier(
+    iree_hal_device_t* base_device);
 
 #endif  // IREE_HAL_DRIVERS_HW_EMULATOR_DEVICE_H_

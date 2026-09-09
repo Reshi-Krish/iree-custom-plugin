@@ -6,6 +6,8 @@
 
 #include "hw_runtime_plugin/executable.h"
 
+#include <string.h>
+
 //===----------------------------------------------------------------------===//
 // iree_hal_hw_emulator_executable_t
 //===----------------------------------------------------------------------===//
@@ -13,6 +15,10 @@
 typedef struct iree_hal_hw_emulator_executable_t {
   iree_hal_resource_t resource;
   iree_allocator_t host_allocator;
+
+  // Owned copy of the export table (see executable.h). NULL/0 if empty.
+  iree_hal_hw_emulator_executable_export_t* exports;
+  iree_host_size_t export_count;
 } iree_hal_hw_emulator_executable_t;
 
 static const iree_hal_executable_vtable_t iree_hal_hw_emulator_executable_vtable;
@@ -39,28 +45,33 @@ iree_status_t iree_hal_hw_emulator_executable_create(
   iree_hal_resource_initialize(&iree_hal_hw_emulator_executable_vtable,
                                &executable->resource);
   executable->host_allocator = host_allocator;
+  executable->exports = NULL;
+  executable->export_count = 0;
 
-  // TODO(null): load executable module(s). Note that the input data should be
-  // treated as untrusted and should be verified to the best ability the format
-  // provides. A target that cannot provide verification will be treated as
-  // unsafe. For JIT-style implementations as much work as possible should be
-  // done here so that errors can be propagated back to users - do not defer
-  // preparation.
-  //
-  // In general the executable should only retain information required to
-  // service the command buffer implementation that will be dispatching entry
-  // points within it. Optionally information can be retained for tracing and
-  // debugging.
-  //
-  // Implementations with flexible formats (ELF, etc) can directly use those for
-  // metadata as well with custom sections. If an implementation does not have a
-  // flexible format or support linking and requires several modules a wrapper
-  // can be used instead. In upstream IREE HALs Flatbuffers is used and is the
-  // preferred format (zero-copy, mmappable, verifiable, near header-only dep
-  // with no binary size or runtime overheads, etc) and is the easiest to use,
-  // but you do you.
-  iree_status_t status =
-      iree_make_status(IREE_STATUS_UNIMPLEMENTED, "executable not implemented");
+  // executable_data is expected to be a raw array of
+  // iree_hal_hw_emulator_executable_export_t (see executable.h for why: no
+  // compiler plugin exists yet to emit a real serialized format). It is not
+  // guaranteed to outlive this call, so we copy it.
+  iree_status_t status = iree_ok_status();
+  const iree_host_size_t export_stride =
+      sizeof(iree_hal_hw_emulator_executable_export_t);
+  if (executable_params->executable_data.data_length % export_stride != 0) {
+    status = iree_make_status(
+        IREE_STATUS_INVALID_ARGUMENT,
+        "executable_data is not a whole number of hw_emulator exports");
+  } else {
+    executable->export_count =
+        executable_params->executable_data.data_length / export_stride;
+    if (executable->export_count > 0) {
+      status = iree_allocator_malloc(
+          host_allocator, executable_params->executable_data.data_length,
+          (void**)&executable->exports);
+      if (iree_status_is_ok(status)) {
+        memcpy(executable->exports, executable_params->executable_data.data,
+               executable_params->executable_data.data_length);
+      }
+    }
+  }
 
   if (iree_status_is_ok(status)) {
     *out_executable = (iree_hal_executable_t*)executable;
@@ -78,8 +89,7 @@ static void iree_hal_hw_emulator_executable_destroy(
   iree_allocator_t host_allocator = executable->host_allocator;
   IREE_TRACE_ZONE_BEGIN(z0);
 
-  // TODO(null): release any implementation resources.
-
+  iree_allocator_free(host_allocator, executable->exports);
   iree_allocator_free(host_allocator, executable);
 
   IREE_TRACE_ZONE_END(z0);
@@ -89,33 +99,54 @@ static iree_host_size_t iree_hal_hw_emulator_executable_export_count(
     iree_hal_executable_t* base_executable) {
   iree_hal_hw_emulator_executable_t* executable =
       iree_hal_hw_emulator_executable_cast(base_executable);
-  // TODO(null): return the total number of exports in the executable.
-  (void)executable;
-  return 0;
+  return executable->export_count;
+}
+
+iree_status_t iree_hal_hw_emulator_executable_lookup_export(
+    iree_hal_executable_t* base_executable,
+    iree_hal_executable_function_t export_ordinal,
+    const iree_hal_hw_emulator_executable_export_t** out_export) {
+  iree_hal_hw_emulator_executable_t* executable =
+      iree_hal_hw_emulator_executable_cast(base_executable);
+  *out_export = NULL;
+  if (!iree_hal_executable_function_is_index_in_range(
+          export_ordinal, executable->export_count)) {
+    return iree_make_status(IREE_STATUS_OUT_OF_RANGE,
+                            "export ordinal %" PRIu64
+                            " out of range (count: %" PRIhsz ")",
+                            export_ordinal.value, executable->export_count);
+  }
+  *out_export =
+      &executable
+           ->exports[iree_hal_executable_function_index(export_ordinal)];
+  return iree_ok_status();
 }
 
 static iree_status_t iree_hal_hw_emulator_executable_export_info(
     iree_hal_executable_t* base_executable,
     iree_hal_executable_function_t export_ordinal,
     iree_hal_executable_function_info_t* out_info) {
-  iree_hal_hw_emulator_executable_t* executable =
-      iree_hal_hw_emulator_executable_cast(base_executable);
-  (void)executable;
-  // TODO(null): return export information.
-  return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                          "reflection not implemented");
+  memset(out_info, 0, sizeof(*out_info));
+  const iree_hal_hw_emulator_executable_export_t* export_entry = NULL;
+  IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_executable_lookup_export(
+      base_executable, export_ordinal, &export_entry));
+  out_info->name = export_entry->name;
+  out_info->binding_count =
+      (uint16_t)(export_entry->num_inputs + export_entry->num_outputs);
+  return iree_ok_status();
 }
 
 static iree_status_t iree_hal_hw_emulator_executable_export_parameters(
     iree_hal_executable_t* base_executable,
     iree_hal_executable_function_t export_ordinal, iree_host_size_t capacity,
     iree_hal_executable_function_parameter_t* out_parameters) {
-  iree_hal_hw_emulator_executable_t* executable =
-      iree_hal_hw_emulator_executable_cast(base_executable);
-  (void)executable;
-  // TODO(null): return export parameter information.
-  return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                          "parameter reflection not implemented");
+  // No parameter reflection: bindings are inputs-then-outputs by convention
+  // (see executable.h) and there's nothing more descriptive to report yet.
+  (void)base_executable;
+  (void)export_ordinal;
+  (void)capacity;
+  (void)out_parameters;
+  return iree_ok_status();
 }
 
 static iree_status_t iree_hal_hw_emulator_executable_lookup_export_by_name(
@@ -123,10 +154,14 @@ static iree_status_t iree_hal_hw_emulator_executable_lookup_export_by_name(
     iree_hal_executable_function_t* out_export_ordinal) {
   iree_hal_hw_emulator_executable_t* executable =
       iree_hal_hw_emulator_executable_cast(base_executable);
-  (void)executable;
-  // TODO(null): lookup the export ordinal by name.
-  return iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                          "reflection not implemented");
+  for (iree_host_size_t i = 0; i < executable->export_count; ++i) {
+    if (iree_string_view_equal(executable->exports[i].name, name)) {
+      *out_export_ordinal = iree_hal_executable_function_from_value((uint64_t)i);
+      return iree_ok_status();
+    }
+  }
+  return iree_make_status(IREE_STATUS_NOT_FOUND,
+                          "no export named '%.*s'", (int)name.size, name.data);
 }
 
 static iree_status_t iree_hal_hw_emulator_executable_lookup_global_by_name(

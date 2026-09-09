@@ -69,6 +69,19 @@ iree_status_t iree_hal_hw_emulator_buffer_wrap(
   return iree_ok_status();
 }
 
+iree_status_t iree_hal_hw_emulator_buffer_handle(
+    iree_hal_buffer_t* base_buffer, iree_device_size_t local_byte_offset,
+    iree_device_size_t local_byte_length, hw_buffer_t* out_hw_buffer) {
+  iree_hal_hw_emulator_buffer_t* buffer =
+      iree_hal_hw_emulator_buffer_cast(base_buffer);
+  if (local_byte_length == IREE_HAL_WHOLE_BUFFER) {
+    local_byte_length = buffer->hw_buffer.size - local_byte_offset;
+  }
+  out_hw_buffer->offset = buffer->hw_buffer.offset + local_byte_offset;
+  out_hw_buffer->size = local_byte_length;
+  return iree_ok_status();
+}
+
 static void iree_hal_hw_emulator_buffer_destroy(iree_hal_buffer_t* base_buffer) {
   iree_hal_hw_emulator_buffer_t* buffer = iree_hal_hw_emulator_buffer_cast(base_buffer);
   iree_allocator_t host_allocator = buffer->host_allocator;

@@ -45,7 +45,9 @@ iree_cc_library(
     iree::async::util::proactor_pool
     iree::base
     iree::base::internal
+    iree::base::internal::arena
     iree::hal
+    iree::hal::utils::deferred_command_buffer
     iree::hal::utils::file_transfer
     iree::hal::utils::files
     iree::hal::utils::queue_emulation
@@ -94,4 +96,18 @@ iree_cc_test(
     iree::async::util::proactor_pool
     iree::base
     iree::hal
+)
+
+iree_cc_test(
+  NAME
+    command_buffer_matmul_smoke_test
+  SRCS
+    "tests/command_buffer_matmul_smoke_test.c"
+  DEPS
+    ::hw_emulator
+    hardware_kernels::hardware_kernels
+    iree::async::util::proactor_pool
+    iree::base
+    iree::hal
+    iree::hal::utils::deferred_command_buffer
 )
