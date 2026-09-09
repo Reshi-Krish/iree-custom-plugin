@@ -411,9 +411,9 @@ static iree_status_t iree_hal_hw_emulator_device_create_semaphore(
     iree_hal_semaphore_t** out_semaphore) {
   iree_hal_hw_emulator_device_t* device = iree_hal_hw_emulator_device_cast(base_device);
 
-  return iree_hal_hw_emulator_semaphore_create(device->proactor, queue_affinity,
-                                        initial_value, flags,
-                                        device->host_allocator, out_semaphore);
+  return iree_hal_hw_emulator_semaphore_create(
+      device->proactor, queue_affinity, initial_value, flags, device->hw_device,
+      device->host_allocator, out_semaphore);
 }
 
 static iree_hal_semaphore_compatibility_t

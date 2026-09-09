@@ -54,3 +54,44 @@ iree_cc_library(
 )
 
 ### BAZEL_TO_CMAKE_PRESERVES_ALL_CONTENT_BELOW_THIS_LINE ###
+
+# Hand-written smoke tests (not part of BUILD.bazel), kept under tests/:
+# each exercises one piece of the driver end-to-end against the real
+# hardware_emulator library, to catch runtime wiring bugs that compiling
+# alone cannot.
+iree_cc_test(
+  NAME
+    allocator_smoke_test
+  SRCS
+    "tests/allocator_smoke_test.c"
+  DEPS
+    ::hw_emulator
+    iree::async::util::proactor_pool
+    iree::base
+    iree::hal
+)
+
+iree_cc_test(
+  NAME
+    semaphore_smoke_test
+  SRCS
+    "tests/semaphore_smoke_test.c"
+  DEPS
+    ::hw_emulator
+    iree::async::util::proactor_pool
+    iree::base
+    iree::base::threading::thread
+    iree::hal
+)
+
+iree_cc_test(
+  NAME
+    semaphore_hw_flag_smoke_test
+  SRCS
+    "tests/semaphore_hw_flag_smoke_test.c"
+  DEPS
+    ::hw_emulator
+    iree::async::util::proactor_pool
+    iree::base
+    iree::hal
+)

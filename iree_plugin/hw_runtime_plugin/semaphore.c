@@ -6,6 +6,10 @@
 
 #include "hw_runtime_plugin/semaphore.h"
 
+#include <time.h>
+
+#include "hw_runtime_plugin/status_util.h"
+
 //===----------------------------------------------------------------------===//
 // iree_hal_hw_emulator_semaphore_t
 //===----------------------------------------------------------------------===//
@@ -13,6 +17,9 @@
 typedef struct iree_hal_hw_emulator_semaphore_t {
   iree_async_semaphore_t async;
   iree_allocator_t host_allocator;
+
+  // Borrowed from the owning device. See semaphore.h.
+  hw_device_t* hw_device;
 } iree_hal_hw_emulator_semaphore_t;
 
 static const iree_hal_semaphore_vtable_t iree_hal_hw_emulator_semaphore_vtable;
@@ -26,8 +33,10 @@ static iree_hal_hw_emulator_semaphore_t* iree_hal_hw_emulator_semaphore_cast(
 iree_status_t iree_hal_hw_emulator_semaphore_create(
     iree_async_proactor_t* proactor, iree_hal_queue_affinity_t queue_affinity,
     uint64_t initial_value, iree_hal_semaphore_flags_t flags,
-    iree_allocator_t host_allocator, iree_hal_semaphore_t** out_semaphore) {
+    hw_device_t* hw_device, iree_allocator_t host_allocator,
+    iree_hal_semaphore_t** out_semaphore) {
   IREE_ASSERT_ARGUMENT(proactor);
+  IREE_ASSERT_ARGUMENT(hw_device);
   IREE_ASSERT_ARGUMENT(out_semaphore);
   IREE_TRACE_ZONE_BEGIN(z0);
   *out_semaphore = NULL;
@@ -44,30 +53,11 @@ iree_status_t iree_hal_hw_emulator_semaphore_create(
       (const iree_async_semaphore_vtable_t*)&iree_hal_hw_emulator_semaphore_vtable,
       proactor, initial_value, frontier_offset, 0, &semaphore->async);
   semaphore->host_allocator = host_allocator;
+  semaphore->hw_device = hw_device;
 
-  // TODO(null): implement semaphores. The iree/async/semaphore.h layer
-  // provides timeline value tracking, frontier accumulation, failure tracking,
-  // and timepoint dispatch. The actual synchronization aspects are handled by
-  // the implementation.
-  //
-  // If the DEVICE_LOCAL flag and a |queue_affinity| is assigned (and not just
-  // IREE_HAL_QUEUE_AFFINITY_ANY) then the implementation can assume that it is
-  // only used on that set of queues (never waited/signaled from anywhere else).
-  // If DEVICE_LOCAL is not set then other devices may signal or wait.
-  //
-  // If the IREE_HAL_SEMAPHORE_FLAG_HOST_INTERRUPT flag is not set then waits
-  // from the host are allowed to spin instead of performing optimized platform
-  // blocking (via interrupt mechanisms).
-  iree_status_t status =
-      iree_make_status(IREE_STATUS_UNIMPLEMENTED, "semaphore not implemented");
-
-  if (iree_status_is_ok(status)) {
-    *out_semaphore = iree_hal_semaphore_cast(&semaphore->async);
-  } else {
-    iree_hal_semaphore_release(iree_hal_semaphore_cast(&semaphore->async));
-  }
+  *out_semaphore = iree_hal_semaphore_cast(&semaphore->async);
   IREE_TRACE_ZONE_END(z0);
-  return status;
+  return iree_ok_status();
 }
 
 static void iree_hal_hw_emulator_semaphore_destroy(
@@ -85,56 +75,27 @@ static void iree_hal_hw_emulator_semaphore_destroy(
 
 static uint64_t iree_hal_hw_emulator_semaphore_query(
     iree_async_semaphore_t* base_semaphore) {
-  iree_hal_hw_emulator_semaphore_t* semaphore =
-      iree_hal_hw_emulator_semaphore_cast(iree_hal_semaphore_cast(base_semaphore));
-
-  // TODO(null): return the current value of the semaphore by (depending on the
-  // implementation) making a syscall to get it. It's expected that the value
-  // may immediately change after being queried here.
-
-  // TODO(null): if the semaphore has failed, encode the failure status in the
-  // return value using iree_hal_status_as_semaphore_failure(failure_status).
-  // The HAL dispatch layer decodes this back to the original status code.
-  // Returning the bare IREE_HAL_SEMAPHORE_FAILURE_VALUE sentinel without
-  // encoding will lose the status code (it decodes to IREE_STATUS_INTERNAL).
-  // Example:
-  //   if (!iree_status_is_ok(semaphore->failure_status)) {
-  //     return iree_hal_status_as_semaphore_failure(
-  //         semaphore->failure_status);
-  //   }
-
-  (void)semaphore;
-  return 0;
+  // Both fields are atomic on the shared iree_async_semaphore_t base: fully
+  // lock-free query, no derived-type cast needed.
+  iree_status_t failure = (iree_status_t)iree_atomic_load(
+      &base_semaphore->failure_status, iree_memory_order_acquire);
+  if (!iree_status_is_ok(failure)) {
+    return iree_hal_status_as_semaphore_failure(failure);
+  }
+  return (uint64_t)iree_atomic_load(&base_semaphore->timeline_value,
+                                    iree_memory_order_acquire);
 }
 
 static iree_status_t iree_hal_hw_emulator_semaphore_signal(
     iree_async_semaphore_t* base_semaphore, uint64_t new_value,
     const iree_async_frontier_t* frontier) {
-  iree_hal_hw_emulator_semaphore_t* semaphore =
-      iree_hal_hw_emulator_semaphore_cast(iree_hal_semaphore_cast(base_semaphore));
-
-  // TODO(null): validation is optional but encouraged if cheap: semaphores
-  // must always be signaled to a value that is greater than the previous value
-  // (not less-than-or-equal).
-
-  // TODO(null): signals when the semaphore have failed should also fail and
-  // because failed semaphores have their value set to
-  // IREE_HAL_SEMAPHORE_FAILURE_VALUE that should happen naturally during
-  // validation. If not then an IREE_STATUS_DATA_LOSS or IREE_STATUS_ABORTED
-  // depending on how fatal such an occurrence is in the implementation.
-  // Data-loss usually indicates an abort()-worthy situation where graceful
-  // handling is not possible while Aborted indicates that an individual work
-  // stream may be invalid but unrelated work streams may still progress.
-
-  // TODO(null): if |frontier| is non-NULL, merge it into the semaphore's
-  // accumulated frontier for causal tracking.
-
-  (void)semaphore;
-  (void)frontier;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "semaphore signal not implemented");
-
-  return status;
+  // Advance the timeline (validates new_value > current, merges frontier) and
+  // wake any timepoints it satisfies. iree_async_semaphore_multi_wait
+  // (used by wait() below) registers the timepoints this dispatches.
+  IREE_RETURN_IF_ERROR(iree_async_semaphore_advance_timeline(
+      base_semaphore, new_value, frontier));
+  iree_async_semaphore_dispatch_timepoints(base_semaphore, new_value);
+  return iree_ok_status();
 }
 
 static iree_status_t iree_hal_hw_emulator_semaphore_wait(
@@ -142,27 +103,65 @@ static iree_status_t iree_hal_hw_emulator_semaphore_wait(
     iree_timeout_t timeout, iree_async_wait_flags_t flags) {
   iree_hal_hw_emulator_semaphore_t* semaphore =
       iree_hal_hw_emulator_semaphore_cast(base_semaphore);
+  (void)flags;
 
-  // TODO(null): if a failure status is set return
-  // `iree_status_from_code(IREE_STATUS_ABORTED)`. Avoid a full status as it may
-  // capture a backtrace and allocate and callers are expected to follow up a
-  // failed wait with a query to get the status.
+  const iree_time_t deadline_ns = iree_timeout_as_deadline_ns(timeout);
 
-  // TODO(null): prefer having a fast-path for if the semaphore is
-  // known-signaled in user-mode. This can usually avoid syscalls/ioctls and
-  // potential context switches in polling cases.
+  // Polls two independent completion sources each iteration:
+  //  (a) the generic host-signaled timeline (iree_hal_semaphore_signal called
+  //      directly, from any thread), and
+  //  (b) the hw_emulator's execution-status flag -- a stand-in for a real
+  //      device's completion/doorbell register, set by a background thread
+  //      running the dispatched kernel (see hw_execute_async).
+  // There's no push-based wakeup for (b) (the background thread only flips
+  // the flag, it does not call back into IREE), so this can't just register
+  // a timepoint and block like the generic iree_async_semaphore_multi_wait
+  // path does -- polling is the actual notification mechanism here, same as
+  // it would be against a real memory-mapped status register without an
+  // interrupt.
+  //
+  // NOTE: hw_query_execution_status() reports one global flag per hw_device,
+  // not per dispatch, and hw_execute_async() refuses a second submission
+  // while one is RUNNING. That's fine for today's one-dispatch-at-a-time
+  // model (there's only ever one outstanding completion to observe, so
+  // advancing straight to |value| below is correct) but will need revisiting
+  // -- e.g. tagging each async execution with the target value it should
+  // complete to -- once more than one dispatch can be in flight at a time.
+  for (;;) {
+    uint64_t current =
+        iree_async_semaphore_query((iree_async_semaphore_t*)base_semaphore);
+    if (current >= IREE_HAL_SEMAPHORE_FAILURE_VALUE) {
+      return iree_hal_semaphore_failure_as_status(current);
+    }
+    if (current >= value) return iree_ok_status();
 
-  // TODO(null): check for `iree_timeout_is_immediate(timeout)` and return
-  // immediately if the condition is not satisfied before waiting with
-  // `iree_status_from_code(IREE_STATUS_DEADLINE_EXCEEDED)`. Prefer the raw code
-  // status instead of a full status object as immediate timeouts are used when
-  // polling and a full status may capture a backtrace and allocate.
+    hw_status_t hw_result;
+    hw_execution_status_t hw_status =
+        hw_query_execution_status(semaphore->hw_device, &hw_result);
+    if (hw_status == HW_EXECUTION_COMPLETE) {
+      IREE_RETURN_IF_ERROR(iree_async_semaphore_advance_timeline(
+          (iree_async_semaphore_t*)base_semaphore, value, NULL));
+      iree_async_semaphore_dispatch_timepoints(
+          (iree_async_semaphore_t*)base_semaphore, value);
+      return iree_ok_status();
+    } else if (hw_status == HW_EXECUTION_FAILED) {
+      iree_status_t failure_status =
+          iree_hal_hw_emulator_status_from_hw(hw_result);
+      iree_async_semaphore_fail((iree_async_semaphore_t*)base_semaphore,
+                                iree_status_clone(failure_status));
+      return failure_status;
+    }
 
-  (void)semaphore;
-  iree_status_t status = iree_make_status(IREE_STATUS_UNIMPLEMENTED,
-                                          "semaphore wait not implemented");
-
-  return status;
+    if (iree_timeout_is_immediate(timeout)) {
+      return iree_status_from_code(IREE_STATUS_DEADLINE_EXCEEDED);
+    }
+    if (deadline_ns != IREE_TIME_INFINITE_FUTURE &&
+        iree_time_now() >= deadline_ns) {
+      return iree_status_from_code(IREE_STATUS_DEADLINE_EXCEEDED);
+    }
+    struct timespec poll_delay = {.tv_sec = 0, .tv_nsec = 1 * 1000 * 1000};
+    nanosleep(&poll_delay, NULL);
+  }
 }
 
 static iree_status_t iree_hal_hw_emulator_semaphore_import_timepoint(

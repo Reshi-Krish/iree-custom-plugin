@@ -5,3 +5,7 @@ add_test(NAME init_template_test COMMAND init_template_test)
 add_executable(matmul_random_test matmul_random_test.c)
 target_link_libraries(matmul_random_test PRIVATE hardware_emulator hardware_kernels m)
 add_test(NAME matmul_random_test COMMAND matmul_random_test)
+
+add_executable(async_execute_test async_execute_test.c)
+target_link_libraries(async_execute_test PRIVATE hardware_emulator)
+add_test(NAME async_execute_test COMMAND async_execute_test)

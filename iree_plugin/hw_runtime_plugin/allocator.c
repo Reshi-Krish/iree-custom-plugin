@@ -159,6 +159,15 @@ iree_hal_hw_emulator_allocator_query_buffer_compatibility(
   params->type |= IREE_HAL_MEMORY_TYPE_HOST_VISIBLE;
   params->type &= ~IREE_HAL_MEMORY_TYPE_OPTIMAL;
 
+  // Every buffer is mappable: hw_buffer_map() always resolves to a host
+  // pointer, so (unlike a discrete-memory device) mapping is never something
+  // callers need to opt into explicitly. Mirrors iree_hal_heap_allocator's
+  // equivalent forcing of these bits for the same reason.
+  params->usage |= IREE_HAL_BUFFER_USAGE_MAPPING_SCOPED |
+                   IREE_HAL_BUFFER_USAGE_MAPPING_PERSISTENT |
+                   IREE_HAL_BUFFER_USAGE_MAPPING_ACCESS_RANDOM |
+                   IREE_HAL_BUFFER_USAGE_TRANSFER;
+
   // Guard against the corner case where the requested buffer size is 0. The
   // application is unlikely to do anything when requesting a 0-byte buffer; but
   // it can happen in real world use cases. So we should at least not crash.

@@ -97,6 +97,38 @@ hw_status_t hw_execute(hw_device_t* device, hw_kernel_fn_t kernel,
                         hw_buffer_t* outputs, size_t num_outputs,
                         void* params);
 
+//===----------------------------------------------------------------------===
+// Asynchronous execution
+//===----------------------------------------------------------------------===
+// Models how real hardware behaves: the host submits work and gets control
+// back immediately, while the "device" (here, a background thread) runs the
+// kernel and later flips a status flag that the host is expected to poll via
+// hw_query_execution_status() -- standing in for a real device's completion/
+// doorbell register. Only one asynchronous execution may be in flight per
+// device at a time.
+
+typedef enum hw_execution_status {
+  HW_EXECUTION_IDLE = 0,  // no asynchronous execution has been submitted yet
+  HW_EXECUTION_RUNNING,   // kernel is running on the background thread
+  HW_EXECUTION_COMPLETE,  // kernel finished and returned HW_STATUS_OK
+  HW_EXECUTION_FAILED,    // kernel or buffer resolution returned an error
+} hw_execution_status_t;
+
+// Copies |inputs|/|outputs| and invokes |kernel| on a new background thread,
+// returning immediately. Fails with HW_STATUS_INTERNAL_ERROR if a previous
+// asynchronous execution on this device is still running.
+hw_status_t hw_execute_async(hw_device_t* device, hw_kernel_fn_t kernel,
+                              hw_buffer_t* inputs, size_t num_inputs,
+                              hw_buffer_t* outputs, size_t num_outputs,
+                              void* params);
+
+// Non-blocking query of the status of the most recent hw_execute_async()
+// call. If the execution has finished (successfully or not), |out_result|
+// (if non-NULL) is set to the kernel's/buffer-resolution's returned status;
+// left untouched otherwise (i.e. while HW_EXECUTION_IDLE or _RUNNING).
+hw_execution_status_t hw_query_execution_status(hw_device_t* device,
+                                                 hw_status_t* out_result);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif
