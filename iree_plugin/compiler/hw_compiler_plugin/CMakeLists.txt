@@ -13,14 +13,24 @@ iree_cc_library(
   NAME
     registration
   SRCS
+    "src/AnnotateMatmulAffinity.cpp"
+    "src/AnnotateMatmulAffinity.h"
     "src/PluginRegistration.cpp"
+    "src/ResolveTrivialWorkgroupCount.cpp"
+    "src/ResolveTrivialWorkgroupCount.h"
   DEPS
     ::defs
     LLVMSupport
+    MLIRArithDialect
+    MLIRFuncDialect
+    MLIRFunctionInterfaces
     MLIRIR
+    MLIRLinalgDialect
     MLIRPass
     MLIRSupport
+    iree::compiler::Dialect::HAL::IR
     iree::compiler::Dialect::HAL::Target
+    iree::compiler::Dialect::TensorExt::IR
     iree::compiler::PluginAPI
   PUBLIC
 )

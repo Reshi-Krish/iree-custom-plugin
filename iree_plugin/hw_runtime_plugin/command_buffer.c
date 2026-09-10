@@ -230,6 +230,15 @@ static iree_status_t iree_hal_hw_emulator_applier_dispatch(
   const iree_hal_hw_emulator_kernel_registration_t* export_entry = NULL;
   IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_executable_lookup_export(
       executable, export_ordinal, &export_entry));
+  // Compile-time-baked shape/metadata for this export (see executable.h) -
+  // NOT `constants`, which is always empty: hw_emulator has no codegen story
+  // to consume push constants with, and the compiler plugin never emits any
+  // (confirmed empirically 2026-09-10: a real end-to-end matmul dispatch
+  // failed "matmul dimensions must be positive" when this used to read
+  // `constants.data`, which is NULL/empty on every real VM-driven dispatch).
+  const uint8_t* kernel_params = NULL;
+  IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_executable_lookup_export_params(
+      executable, export_ordinal, &kernel_params));
   const iree_host_size_t expected_bindings =
       export_entry->num_inputs + export_entry->num_outputs;
   if (bindings.count != expected_bindings) {
@@ -271,7 +280,7 @@ static iree_status_t iree_hal_hw_emulator_applier_dispatch(
   IREE_RETURN_IF_ERROR(iree_hal_hw_emulator_status_from_hw(hw_execute_async(
       applier->hw_device, export_entry->kernel, input_handles,
       export_entry->num_inputs, output_handles, export_entry->num_outputs,
-      (void*)constants.data)));
+      (void*)kernel_params)));
 
   // Block until the kernel actually finishes: hw_execute_async only supports
   // one execution in flight per device (see hardwareEmulator.h), and
