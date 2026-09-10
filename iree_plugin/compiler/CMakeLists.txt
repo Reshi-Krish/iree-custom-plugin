@@ -1,0 +1,2 @@
+iree_setup_c_src_root()
+add_subdirectory(hw_compiler_plugin)
